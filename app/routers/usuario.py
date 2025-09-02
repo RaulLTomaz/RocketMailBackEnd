@@ -30,19 +30,19 @@ async def login(
 async def criar(usuario: UsuarioCreate, db: Database = Depends(get_database)):
     return await crud_usuario.criar_usuario(db, usuario)
 
-@router.get(
-    "/",
-    response_model=list[UsuarioOut],
-    summary="Listar usuários",
-    description="Lista usuários com paginação. `sort` aceita `nome`, `-nome`, `id` ou `-id`.",
-)
-async def listar(
-    db: Database = Depends(get_database),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    sort: str = Query("nome", pattern="^-?(nome|id)$"),
-):
-    return await crud_usuario.listar_usuarios(db, limit=limit, offset=offset, sort=sort)
+# @router.get(
+#     "/",
+#     response_model=list[UsuarioOut],
+#     summary="Listar usuários",
+#     description="Lista usuários com paginação. `sort` aceita `nome`, `-nome`, `id` ou `-id`.",
+# )
+# async def listar(
+#     db: Database = Depends(get_database),
+#     limit: int = Query(50, ge=1, le=200),
+#     offset: int = Query(0, ge=0),
+#     sort: str = Query("nome", pattern="^-?(nome|id)$"),
+# ):
+#     return await crud_usuario.listar_usuarios(db, limit=limit, offset=offset, sort=sort)
 
 @router.get(
     "/me",
@@ -96,13 +96,13 @@ async def buscar(usuario_id: int, db: Database = Depends(get_database)):
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return usuario_row
 
-@router.delete(
-    "/{usuario_id}",
-    summary="Excluir usuário por ID",
-    description="Exclui um usuário específico (atenção: remove posts e relações).",
-)
-async def delete_usuario(usuario_id: int, db: Database = Depends(get_database)):
-    return await crud_usuario.deletar_usuario(db, usuario_id)
+# @router.delete(
+#     "/{usuario_id}",
+#     summary="Excluir usuário por ID",
+#     description="Exclui um usuário específico (atenção: remove posts e relações).",
+# )
+# async def delete_usuario(usuario_id: int, db: Database = Depends(get_database)):
+#     return await crud_usuario.deletar_usuario(db, usuario_id)
 
 # --- Perfil: contadores agregados ---
 @router.get(

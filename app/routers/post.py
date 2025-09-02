@@ -19,19 +19,19 @@ async def create_post(
 ):
     return await post_crud.create_post(db, post_in, usuario_id)
 
-@router.get(
-    "/",
-    summary="Listar posts",
-    description="Lista posts com paginação e ordenação por data (`-data` para decrescente, `data` para crescente).",
-)
-async def read_posts(
-    db: Database = Depends(get_database),
-    usuario_id: int = Depends(get_current_user),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    sort: str = Query("-data", pattern="^-?data$"),
-):
-    return await post_crud.get_posts(db, limit=limit, offset=offset, sort=sort)
+# @router.get(
+#     "/",
+#     summary="Listar posts",
+#     description="Lista posts com paginação e ordenação por data (`-data` para decrescente, `data` para crescente).",
+# )
+# async def read_posts(
+#     db: Database = Depends(get_database),
+#     usuario_id: int = Depends(get_current_user),
+#     limit: int = Query(50, ge=1, le=200),
+#     offset: int = Query(0, ge=0),
+#     sort: str = Query("-data", pattern="^-?data$"),
+# ):
+#     return await post_crud.get_posts(db, limit=limit, offset=offset, sort=sort)
 
 @router.get(
     "/feed",

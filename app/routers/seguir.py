@@ -11,9 +11,9 @@ async def seguir_usuario(seguidor_id: int, seguido_id: int, db: Database = Depen
     return await seguir_crud.seguir_usuario(db, seguidor_id, seguido_id)
 
 
-@router.get("/seguidos/{seguidor_id}")
-async def listar_seguidos(seguidor_id: int, db: Database = Depends(get_database)):
-    return await seguir_crud.listar_seguidos(db, seguidor_id)
+# @router.get("/seguidos/{seguidor_id}")
+# async def listar_seguidos(seguidor_id: int, db: Database = Depends(get_database)):
+#     return await seguir_crud.listar_seguidos(db, seguidor_id)
 
 
 @router.delete("/")
