@@ -15,11 +15,13 @@ async def lifespan(app: FastAPI):
     await database.disconnect()
 
 app = FastAPI(lifespan=lifespan)
+origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+use_wildcard = (not origins_list) or ("*" in origins_list)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in ALLOWED_ORIGINS.split(",")] if ALLOWED_ORIGINS else ["*"],
-    allow_credentials=True,
+    allow_origins=["*"] if use_wildcard else origins_list,
+    allow_credentials=False if use_wildcard else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
