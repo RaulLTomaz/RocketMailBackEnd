@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from databases import Database
+from starlette import status
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_database
 from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate
@@ -8,7 +10,13 @@ from app.crud import usuario as crud_usuario
 from app.crud import post as post_crud
 from app.crud.usuario import autenticar_usuario, get_current_user
 
+try:
+    import asyncpg  # driver comum no Render para Postgres
+except Exception:  # pragma: no cover
+    asyncpg = None
+
 router = APIRouter(prefix="/usuario", tags=["Usuário"])
+
 
 @router.post(
     "/login",
@@ -21,28 +29,32 @@ async def login(
 ):
     return await autenticar_usuario(db, form_data.username, form_data.password)
 
+
 @router.post(
     "/",
     response_model=UsuarioOut,
+    status_code=status.HTTP_201_CREATED,
     summary="Criar usuário",
     description="Cria um usuário com `nome`, `email` e `senha`.",
 )
 async def criar(usuario: UsuarioCreate, db: Database = Depends(get_database)):
-    return await crud_usuario.criar_usuario(db, usuario)
+    """
+    Cria usuário e trata erros comuns para não retornar 500.
+    """
+    try:
+        return await crud_usuario.criar_usuario(db, usuario)
 
-# @router.get(
-#     "/",
-#     response_model=list[UsuarioOut],
-#     summary="Listar usuários",
-#     description="Lista usuários com paginação. `sort` aceita `nome`, `-nome`, `id` ou `-id`.",
-# )
-# async def listar(
-#     db: Database = Depends(get_database),
-#     limit: int = Query(50, ge=1, le=200),
-#     offset: int = Query(0, ge=0),
-#     sort: str = Query("nome", pattern="^-?(nome|id)$"),
-# ):
-#     return await crud_usuario.listar_usuarios(db, limit=limit, offset=offset, sort=sort)
+    except IntegrityError:
+        # chave única do email violada
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
+
+    except Exception as e:
+        # alguns drivers expõem UniqueViolation específica
+        if asyncpg and isinstance(e, getattr(asyncpg, "UniqueViolationError", tuple())):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
+        # erro genérico (ex.: validação/banco)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não foi possível criar o usuário.")
+
 
 @router.get(
     "/me",
@@ -59,6 +71,7 @@ async def get_me(
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return row
 
+
 @router.patch(
     "/me",
     response_model=UsuarioOut,
@@ -72,6 +85,7 @@ async def patch_me(
 ):
     return await crud_usuario.atualizar_usuario(db, usuario_id, payload)
 
+
 @router.delete(
     "/me",
     summary="Excluir minha conta",
@@ -83,6 +97,7 @@ async def delete_me(
 ):
     await crud_usuario.deletar_usuario(db, usuario_id)
     return {"deleted": True}
+
 
 @router.get(
     "/{usuario_id}",
@@ -96,15 +111,7 @@ async def buscar(usuario_id: int, db: Database = Depends(get_database)):
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     return usuario_row
 
-# @router.delete(
-#     "/{usuario_id}",
-#     summary="Excluir usuário por ID",
-#     description="Exclui um usuário específico (atenção: remove posts e relações).",
-# )
-# async def delete_usuario(usuario_id: int, db: Database = Depends(get_database)):
-#     return await crud_usuario.deletar_usuario(db, usuario_id)
 
-# --- Perfil: contadores agregados ---
 @router.get(
     "/{usuario_id}/stats",
     summary="Estatísticas do perfil",
@@ -113,7 +120,7 @@ async def buscar(usuario_id: int, db: Database = Depends(get_database)):
 async def stats(usuario_id: int, db: Database = Depends(get_database)):
     return await crud_usuario.stats_usuario(db, usuario_id)
 
-# --- Perfil: timeline do usuário (paginada) ---
+
 @router.get(
     "/{usuario_id}/posts",
     summary="Posts do usuário (timeline pública)",

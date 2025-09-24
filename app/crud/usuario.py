@@ -9,7 +9,13 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select, asc, desc, func
+from sqlalchemy.exc import IntegrityError
 import os
+
+try:
+    import asyncpg  # driver comum no Render para Postgres
+except Exception:  # pragma: no cover
+    asyncpg = None
 
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret")
 ALGORITHM = "HS256"
@@ -46,17 +52,41 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> int:
     return usuario_id
 
 
-async def criar_usuario(db: Database, usuario_data: UsuarioCreate):
+# ---------- criação de usuário ----------
+async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
+    """
+    Cria usuário com senha hasheada.
+    Retorna apenas {id, nome, email}.
+    Lança HTTPException 409 para e-mail duplicado e 400 para falhas genéricas.
+    """
     senha_hash = gerar_hash_senha(usuario_data.senha)
-    query = usuario.insert().values(
+    insert_stmt = usuario.insert().values(
         nome=usuario_data.nome,
         email=usuario_data.email,
         senha=senha_hash,
     )
-    user_id = await db.execute(query)
-    return {**usuario_data.model_dump(), "id": user_id}
+
+    try:
+        # Em Postgres, `execute` retorna o PK inserido
+        user_id = await db.execute(insert_stmt)
+
+        row = await db.fetch_one(usuario.select().where(usuario.c.id == user_id))
+        if not row:
+            raise HTTPException(status_code=500, detail="Falha ao ler usuário recém-criado.")
+        return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
+
+    except IntegrityError:
+        # e-mail (UNIQUE) duplicado
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
+
+    except Exception as e:
+        # alguns drivers levantam UniqueViolation específica
+        if asyncpg and isinstance(e, getattr(asyncpg, "UniqueViolationError", tuple())):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não foi possível criar o usuário.")
 
 
+# ---------- listagem com ordenação ----------
 async def listar_usuarios(db: Database, limit: int = 50, offset: int = 0, sort: str = "nome"):
     """
     Lista usuários com paginação.
