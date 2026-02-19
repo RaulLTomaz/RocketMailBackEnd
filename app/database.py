@@ -8,8 +8,7 @@ from sqlalchemy.orm import declarative_base
 
 ENV = os.getenv("PYTHON_ENV", "dev")
 
-# Em produção (Render), normalmente você NÃO precisa carregar .env.
-# Mas manter assim não atrapalha, desde que as variáveis estejam no painel.
+# Em produção (Render) você não precisa de .env, mas manter para dev/test ok.
 if ENV == "test":
     load_dotenv(".env.test")
 elif ENV == "dev":
@@ -24,16 +23,12 @@ else:
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL não definida (verifique suas env vars / .env).")
 
-# Normaliza caso venha "postgres://" (alguns provedores usam isso)
+# Normaliza caso venha "postgres://"
 DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# --- Databases (async) ---
-# Mantemos como está: o driver usado depende do seu DATABASE_URL e libs instaladas.
-database = Database(DATABASE_URL)
-
-# --- SQLAlchemy (sync) ---
-# Render/Postgres geralmente exige SSL: forçamos sslmode=require no psycopg2
 metadata = MetaData()
+
+# SQLAlchemy (psycopg2) - força SSL
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
@@ -41,6 +36,13 @@ engine = create_engine(
 )
 
 Base = declarative_base()
+
+# Databases (asyncpg) - força SSL também
+# databases repassa kwargs pro driver (asyncpg), então ssl=True funciona.
+database = Database(
+    DATABASE_URL,
+    ssl=True,
+)
 
 
 def get_database():
