@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import database, engine, metadata
 from app.routers import usuario, post, seguir, like
 
-
 logger = logging.getLogger("uvicorn.error")
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
@@ -17,30 +16,22 @@ RUN_MIGRATIONS = os.getenv("RUN_MIGRATIONS", "0") == "1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1) Tenta criar tabelas só quando explicitamente habilitado
+    # 1) Migrações/tabelas só se habilitar
     if RUN_MIGRATIONS:
-        try:
-            metadata.create_all(bind=engine)
-            logger.info("✅ metadata.create_all OK (RUN_MIGRATIONS=1)")
-        except Exception as e:
-            # Não derruba o app por falha de DB/migrations
-            logger.exception("⚠️ Falha em metadata.create_all: %s", e)
+        logger.info("RUN_MIGRATIONS=1 -> criando tabelas...")
+        metadata.create_all(bind=engine)
+        logger.info("✅ metadata.create_all OK")
 
-    # 2) Conexão com o banco (não derruba o app se falhar)
-    try:
-        await database.connect()
-        logger.info("✅ database.connect OK")
-    except Exception as e:
-        logger.exception("⚠️ Falha ao conectar no banco: %s", e)
+    # 2) DB é obrigatório: se falhar, derruba o app (pra ver o erro real no Render)
+    logger.info("Conectando no banco...")
+    await database.connect()
+    logger.info("✅ database.connect OK")
 
     yield
 
-    # 3) Disconnect
-    try:
-        await database.disconnect()
-        logger.info("✅ database.disconnect OK")
-    except Exception as e:
-        logger.exception("⚠️ Falha ao desconectar do banco: %s", e)
+    logger.info("Desconectando do banco...")
+    await database.disconnect()
+    logger.info("✅ database.disconnect OK")
 
 
 app = FastAPI(lifespan=lifespan)
