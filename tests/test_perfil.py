@@ -11,15 +11,16 @@ async def _cria_usuario_api(client: AsyncClient, nome: str, email: str, senha: s
         "/usuario/",
         json={"nome": nome, "email": email, "senha": senha},
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
 async def _seguir_api(client: AsyncClient, seguidor_id: int, seguido_id: int) -> None:
-    # suas rotas de seguir usam querystring e não exigem auth
+    token = gerar_token_teste(seguidor_id)
     resp = await client.post(
         "/seguir/",
-        params={"seguidor_id": seguidor_id, "seguido_id": seguido_id},
+        params={"seguido_id": seguido_id},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
 

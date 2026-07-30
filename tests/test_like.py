@@ -7,7 +7,7 @@ async def _cria_usuario_api(client: AsyncClient, nome: str, email: str, senha: s
         "/usuario/",
         json={"nome": nome, "email": email, "senha": senha},
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 async def _cria_post_api(client: AsyncClient, token: str, texto: str):

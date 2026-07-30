@@ -6,34 +6,46 @@ from sqlalchemy import create_engine, MetaData
 from databases import Database
 from sqlalchemy.orm import declarative_base
 
-ENV = os.getenv("PYTHON_ENV", "dev")
+ENV = os.getenv("PYTHON_ENV", "dev").lower()
 
 # Só carrega .env localmente (no Render não precisa)
 if ENV == "test":
     load_dotenv(".env.test")
-elif ENV == "dev":
+elif ENV in ("dev", "development"):
     load_dotenv(".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL and ENV == "test":
+    # compat com nome antigo no .env.test
+    DATABASE_URL = os.getenv("DATABASE_URL_TEST")
+
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL não definida.")
 
 # compat: algumas plataformas usam postgres://
 DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# engine sync (psycopg2) não aceita +asyncpg
+SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "", 1)
+
 metadata = MetaData()
 Base = declarative_base()
 
-# engine (sync) - só usado se você ligar RUN_MIGRATIONS=1
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    connect_args={"sslmode": "require"},
-)
+# SSL só em produção (ou se DATABASE_SSL=1)
+use_ssl = ENV in ("production", "prod") or os.getenv("DATABASE_SSL", "0") == "1"
 
-# databases (asyncpg) - FORÇA SSL
-ssl_context = ssl.create_default_context()
-database = Database(DATABASE_URL, ssl=ssl_context)
+engine_kwargs = {"pool_pre_ping": True}
+if use_ssl:
+    engine_kwargs["connect_args"] = {"sslmode": "require"}
+
+engine = create_engine(SYNC_DATABASE_URL, **engine_kwargs)
+
+if use_ssl:
+    ssl_context = ssl.create_default_context()
+    database = Database(DATABASE_URL, ssl=ssl_context)
+else:
+    database = Database(DATABASE_URL)
+
 
 def get_database():
     return database

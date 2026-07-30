@@ -10,7 +10,7 @@ async def test_me_endpoints(client: AsyncClient):
         "senha": "senha123"
     }
     resp = await client.post("/usuario/", json=usuario_data)
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     usuario = resp.json()
     usuario_id = usuario["id"]
 

@@ -1,9 +1,20 @@
 from typing import Dict, List
 from databases import Database
+from fastapi import HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.like import like
+from app.models.post import post
+
+
+async def _garantir_post_existe(db: Database, post_id: int) -> None:
+    row = await db.fetch_one(select(post.c.id).where(post.c.id == post_id))
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Post não encontrado",
+        )
 
 
 async def dar_like(db: Database, usuario_id: int, post_id: int) -> dict:
@@ -11,6 +22,7 @@ async def dar_like(db: Database, usuario_id: int, post_id: int) -> dict:
     Idempotente: se já existir, não falha.
     Usa ON CONFLICT na PK (like_pkey).
     """
+    await _garantir_post_existe(db, post_id)
     stmt = insert(like).values(usuario_id=usuario_id, post_id=post_id)
     stmt = stmt.on_conflict_do_nothing(constraint="like_pkey")
     await db.execute(stmt)

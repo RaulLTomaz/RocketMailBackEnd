@@ -2,18 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from databases import Database
 from starlette import status
-from sqlalchemy.exc import IntegrityError
 
 from app.database import get_database
 from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate
 from app.crud import usuario as crud_usuario
 from app.crud import post as post_crud
 from app.crud.usuario import autenticar_usuario, get_current_user
-
-try:
-    import asyncpg  # driver comum no Render para Postgres
-except Exception:  # pragma: no cover
-    asyncpg = None
 
 router = APIRouter(prefix="/usuario", tags=["Usuário"])
 
@@ -38,22 +32,8 @@ async def login(
     description="Cria um usuário com `nome`, `email` e `senha`.",
 )
 async def criar(usuario: UsuarioCreate, db: Database = Depends(get_database)):
-    """
-    Cria usuário e trata erros comuns para não retornar 500.
-    """
-    try:
-        return await crud_usuario.criar_usuario(db, usuario)
-
-    except IntegrityError:
-        # chave única do email violada
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
-
-    except Exception as e:
-        # alguns drivers expõem UniqueViolation específica
-        if asyncpg and isinstance(e, getattr(asyncpg, "UniqueViolationError", tuple())):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
-        # erro genérico (ex.: validação/banco)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não foi possível criar o usuário.")
+    # Erros (409 e-mail duplicado, 400 genérico) já são tratados no CRUD via HTTPException
+    return await crud_usuario.criar_usuario(db, usuario)
 
 
 @router.get(

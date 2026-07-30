@@ -1,8 +1,11 @@
+from datetime import datetime, timedelta, timezone
 from app.models.usuario import usuario
 from app.models.seguir import seguir
 from app.models.post import post
+from app.models.like import like
 from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
 from app.crud.seguir import remover_todas_as_relacoes_do_usuario
+from app.database import get_database
 from databases import Database
 from fastapi import HTTPException, Depends, status
 from passlib.context import CryptContext
@@ -19,6 +22,7 @@ except Exception:  # pragma: no cover
 
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret")
 ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/usuario/login")
@@ -33,10 +37,21 @@ def gerar_hash_senha(senha):
 
 
 def criar_token_acesso(data: dict):
-    return jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+    to_encode.update(
+        {
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
+        }
+    )
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> int:
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Database = Depends(get_database),
+) -> int:
     credentials_exception = HTTPException(
         status_code=401,
         detail="Não autorizado",
@@ -44,12 +59,29 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> int:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        usuario_id: int = int(payload.get("sub"))
-        if usuario_id is None:
+        sub = payload.get("sub")
+        if sub is None:
             raise credentials_exception
-    except JWTError:
+        usuario_id = int(sub)
+    except (JWTError, TypeError, ValueError):
+        raise credentials_exception
+
+    row = await db.fetch_one(usuario.select().where(usuario.c.id == usuario_id))
+    if not row:
         raise credentials_exception
     return usuario_id
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    if isinstance(exc, IntegrityError):
+        return True
+    if asyncpg and isinstance(exc, getattr(asyncpg, "UniqueViolationError", tuple())):
+        return True
+    # databases/asyncpg às vezes encapsula a causa
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "orig", None)
+    if cause is not None and cause is not exc:
+        return _is_unique_violation(cause)
+    return False
 
 
 # ---------- criação de usuário ----------
@@ -75,15 +107,19 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
             raise HTTPException(status_code=500, detail="Falha ao ler usuário recém-criado.")
         return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
 
-    except IntegrityError:
-        # e-mail (UNIQUE) duplicado
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
+    except HTTPException:
+        raise
 
     except Exception as e:
-        # alguns drivers levantam UniqueViolation específica
-        if asyncpg and isinstance(e, getattr(asyncpg, "UniqueViolationError", tuple())):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado.")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Não foi possível criar o usuário.")
+        if _is_unique_violation(e):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="E-mail já cadastrado.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não foi possível criar o usuário.",
+        )
 
 
 # ---------- listagem com ordenação ----------
@@ -120,15 +156,15 @@ async def buscar_usuario_por_id(db: Database, usuario_id: int):
 
 
 async def deletar_usuario(db: Database, usuario_id: int):
-    # Remove os posts primeiro
-    await db.execute(post.delete().where(post.c.usuario_id == usuario_id))
+    async with db.transaction():
+        # Likes do usuário e likes em posts dele (CASCADE pode já cobrir, mas fica explícito)
+        sub_posts = select(post.c.id).where(post.c.usuario_id == usuario_id)
+        await db.execute(like.delete().where(like.c.post_id.in_(sub_posts)))
+        await db.execute(like.delete().where(like.c.usuario_id == usuario_id))
 
-    # Remove TODAS as relações de seguir desse usuário
-    await remover_todas_as_relacoes_do_usuario(db, usuario_id)
-
-    # Agora remove o usuário
-    query = usuario.delete().where(usuario.c.id == usuario_id)
-    await db.execute(query)
+        await db.execute(post.delete().where(post.c.usuario_id == usuario_id))
+        await remover_todas_as_relacoes_do_usuario(db, usuario_id)
+        await db.execute(usuario.delete().where(usuario.c.id == usuario_id))
 
     return {"deleted": True, "usuario_id": usuario_id}
 
@@ -151,38 +187,6 @@ def _usuario_publico(row) -> dict:
     return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
 
 
-# ---------- seguir / deixar de seguir ----------
-async def seguir_usuario(
-    db: Database, seguido_id: int, seguidor_id: int = Depends(get_current_user)
-):
-    query = seguir.insert().values(seguidor_id=seguidor_id, seguido_id=seguido_id)
-    await db.execute(query)
-    return {"seguidor_id": seguidor_id, "seguido_id": seguido_id}
-
-
-async def listar_seguidos(
-    db: Database, seguidor_id: int = Depends(get_current_user)
-):
-    query = usuario.select().where(
-        usuario.c.id.in_(
-            seguir.select()
-            .with_only_columns(seguir.c.seguido_id)
-            .where(seguir.c.seguidor_id == seguidor_id)
-        )
-    )
-    return await db.fetch_all(query)
-
-
-async def deixar_de_seguir(
-    db: Database, seguido_id: int, seguidor_id: int = Depends(get_current_user)
-):
-    query = seguir.delete().where(
-        (seguir.c.seguidor_id == seguidor_id) & (seguir.c.seguido_id == seguido_id)
-    )
-    await db.execute(query)
-    return {"deleted": True, "seguidor_id": seguidor_id, "seguido_id": seguido_id}
-
-
 # ---------- atualizar perfil (/me PATCH) ----------
 async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) -> dict:
     valores = {}
@@ -194,9 +198,17 @@ async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) 
         valores["senha"] = gerar_hash_senha(data.senha)
 
     if valores:
-        await db.execute(
-            usuario.update().where(usuario.c.id == usuario_id).values(**valores)
-        )
+        try:
+            await db.execute(
+                usuario.update().where(usuario.c.id == usuario_id).values(**valores)
+            )
+        except Exception as e:
+            if _is_unique_violation(e):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="E-mail já cadastrado.",
+                )
+            raise
 
     row = await buscar_usuario_por_id(db, usuario_id)
     if not row:
