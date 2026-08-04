@@ -22,6 +22,7 @@ async def test_criar_usuario_sucesso(client: AsyncClient):
     assert body["email"] == email
     assert "id" in body
     assert "senha" not in body
+    assert body.get("foto_url") is None
 
 
 async def test_criar_usuario_email_duplicado(client: AsyncClient):

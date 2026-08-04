@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from databases import Database
 from starlette import status
@@ -8,6 +8,11 @@ from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate
 from app.crud import usuario as crud_usuario
 from app.crud import post as post_crud
 from app.crud.usuario import autenticar_usuario, get_current_user
+from app.storage import (
+    salvar_foto_perfil,
+    remover_arquivo_local_se_houver,
+    remover_foto_cloudinary_se_houver,
+)
 
 router = APIRouter(prefix="/usuario", tags=["Usuário"])
 
@@ -56,7 +61,7 @@ async def get_me(
     "/me",
     response_model=UsuarioOut,
     summary="Atualizar meu perfil",
-    description="Atualiza `nome`, `email` e/ou `senha` do usuário autenticado.",
+    description="Atualiza `nome`, `email`, `senha` e/ou `foto_url` do usuário autenticado.",
 )
 async def patch_me(
     payload: UsuarioUpdate,
@@ -64,6 +69,54 @@ async def patch_me(
     usuario_id: int = Depends(get_current_user),
 ):
     return await crud_usuario.atualizar_usuario(db, usuario_id, payload)
+
+
+@router.post(
+    "/me/foto",
+    response_model=UsuarioOut,
+    summary="Upload da foto de perfil",
+    description="Envia imagem (JPEG/PNG/WebP, até 5 MB) no campo multipart `file`.",
+)
+async def upload_foto_me(
+    file: UploadFile = File(...),
+    db: Database = Depends(get_database),
+    usuario_id: int = Depends(get_current_user),
+):
+    atual = await crud_usuario.buscar_usuario_por_id(db, usuario_id)
+    if not atual:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    foto_url = await salvar_foto_perfil(file, usuario_id)
+    try:
+        antiga = atual["foto_url"]
+    except (KeyError, IndexError, TypeError):
+        antiga = None
+    if antiga and antiga != foto_url:
+        remover_arquivo_local_se_houver(antiga)
+
+    return await crud_usuario.atualizar_foto_url(db, usuario_id, foto_url)
+
+
+@router.delete(
+    "/me/foto",
+    response_model=UsuarioOut,
+    summary="Remover foto de perfil",
+)
+async def delete_foto_me(
+    db: Database = Depends(get_database),
+    usuario_id: int = Depends(get_current_user),
+):
+    atual = await crud_usuario.buscar_usuario_por_id(db, usuario_id)
+    if not atual:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    try:
+        antiga = atual["foto_url"]
+    except (KeyError, IndexError, TypeError):
+        antiga = None
+    remover_arquivo_local_se_houver(antiga)
+    remover_foto_cloudinary_se_houver(usuario_id)
+    return await crud_usuario.atualizar_foto_url(db, usuario_id, None)
 
 
 @router.delete(

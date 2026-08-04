@@ -28,7 +28,11 @@ if platform.system() == "Windows":
 
 @pytest.fixture(scope="session", autouse=True)
 def preparar_banco():
+    from sqlalchemy import text
+
     metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT"))
     yield
     metadata.drop_all(bind=engine)
 

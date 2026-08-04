@@ -9,6 +9,7 @@ from app.schemas.post import PostCreate
 
 
 def _row_to_response(row):
+    foto = getattr(row, "usuario_foto_url", None)
     return {
         "id": row.id,
         "post": row.post,
@@ -16,8 +17,19 @@ def _row_to_response(row):
         "usuario": {
             "id": row.usuario_id,
             "nome": row.usuario_nome,
+            "foto_url": foto,
         },
     }
+
+
+_POST_USER_COLS = (
+    post.c.id,
+    post.c.post,
+    post.c.data_criacao,
+    usuario.c.id.label("usuario_id"),
+    usuario.c.nome.label("usuario_nome"),
+    usuario.c.foto_url.label("usuario_foto_url"),
+)
 
 
 async def create_post(db: Database, post_data: PostCreate, usuario_id: int):
@@ -31,13 +43,7 @@ async def create_post(db: Database, post_data: PostCreate, usuario_id: int):
     post_id = await db.execute(query)
 
     select_query = (
-        select(
-            post.c.id,
-            post.c.post,
-            post.c.data_criacao,
-            usuario.c.id.label("usuario_id"),
-            usuario.c.nome.label("usuario_nome"),
-        )
+        select(*_POST_USER_COLS)
         .select_from(post.join(usuario, post.c.usuario_id == usuario.c.id))
         .where(post.c.id == post_id)
     )
@@ -56,13 +62,7 @@ async def get_posts(db: Database, limit: int = 50, offset: int = 0, sort: str = 
     order_col = desc(post.c.data_criacao) if sort == "-data" else asc(post.c.data_criacao)
 
     query = (
-        select(
-            post.c.id,
-            post.c.post,
-            post.c.data_criacao,
-            usuario.c.id.label("usuario_id"),
-            usuario.c.nome.label("usuario_nome"),
-        )
+        select(*_POST_USER_COLS)
         .select_from(post.join(usuario, post.c.usuario_id == usuario.c.id))
         .order_by(order_col)
         .limit(limit)
@@ -79,13 +79,7 @@ async def get_posts_por_usuario(
     Timeline pública do usuário (paginada).
     """
     query = (
-        select(
-            post.c.id,
-            post.c.post,
-            post.c.data_criacao,
-            usuario.c.id.label("usuario_id"),
-            usuario.c.nome.label("usuario_nome"),
-        )
+        select(*_POST_USER_COLS)
         .select_from(post.join(usuario, post.c.usuario_id == usuario.c.id))
         .where(usuario.c.id == usuario_id)
         .order_by(desc(post.c.data_criacao))
@@ -103,7 +97,6 @@ async def get_feed(db: Database, viewer_id: int, limit: int = 50, offset: int = 
         - Dentro de cada grupo, ordem decrescente por data.
         - Binda viewer_id no próprio bindparam (sem passar values no fetch_all).
     """
-    # binda com tipo e valor para evitar inferência errada (asyncpg esperando str)
     viewer_bp = bindparam("viewer_id", type_=Integer, value=viewer_id)
 
     sub_following = select(seguir.c.seguido_id).where(seguir.c.seguidor_id == viewer_bp)
@@ -114,14 +107,7 @@ async def get_feed(db: Database, viewer_id: int, limit: int = 50, offset: int = 
     ).label("prioridade")
 
     query = (
-        select(
-            prioridade,
-            post.c.id,
-            post.c.post,
-            post.c.data_criacao,
-            usuario.c.id.label("usuario_id"),
-            usuario.c.nome.label("usuario_nome"),
-        )
+        select(prioridade, *_POST_USER_COLS)
         .select_from(post.join(usuario, post.c.usuario_id == usuario.c.id))
         .order_by(prioridade.asc(), desc(post.c.data_criacao))
         .limit(limit)
@@ -129,17 +115,7 @@ async def get_feed(db: Database, viewer_id: int, limit: int = 50, offset: int = 
     )
 
     rows = await db.fetch_all(query)
-
-    # Descarta 'prioridade' no response
-    return [
-        {
-            "id": r.id,
-            "post": r.post,
-            "data_criacao": r.data_criacao,
-            "usuario": {"id": r.usuario_id, "nome": r.usuario_nome},
-        }
-        for r in rows
-    ]
+    return [_row_to_response(r) for r in rows]
 
 
 async def delete_post(db: Database, post_id: int, usuario_id: int):

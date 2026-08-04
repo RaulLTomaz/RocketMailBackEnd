@@ -1,4 +1,4 @@
-from sqlalchemy import Table, Column, Integer, String
+from sqlalchemy import Table, Column, Integer, String, Text
 from app.database import metadata
 
 usuario = Table(
@@ -8,4 +8,5 @@ usuario = Table(
     Column("nome", String(100), nullable=False),
     Column("email", String(100), nullable=False, unique=True),
     Column("senha", String(200), nullable=False),
+    Column("foto_url", Text, nullable=True),
 )

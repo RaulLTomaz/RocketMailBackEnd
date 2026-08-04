@@ -12,7 +12,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select, asc, desc, func
-import logging
+from sqlalchemy.exc import IntegrityError
 import os
 
 try:
@@ -73,18 +73,14 @@ async def get_current_user(
 
 
 def _is_unique_violation(exc: Exception) -> bool:
-    """Detecta unique violation mesmo quando databases/asyncpg encapsulam a exceção."""
-    cur: BaseException | None = exc
-    seen: set[int] = set()
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if asyncpg and isinstance(cur, getattr(asyncpg, "UniqueViolationError", tuple())):
-            return True
-        name = type(cur).__name__.lower()
-        text = str(cur).lower()
-        if "uniqueviolation" in name or "unique" in text or "duplicate key" in text:
-            return True
-        cur = getattr(cur, "__cause__", None) or getattr(cur, "orig", None)
+    if isinstance(exc, IntegrityError):
+        return True
+    if asyncpg and isinstance(exc, getattr(asyncpg, "UniqueViolationError", tuple())):
+        return True
+    # databases/asyncpg às vezes encapsula a causa
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "orig", None)
+    if cause is not None and cause is not exc:
+        return _is_unique_violation(cause)
     return False
 
 
@@ -95,24 +91,25 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
     Retorna apenas {id, nome, email}.
     Lança HTTPException 409 para e-mail duplicado e 400 para falhas genéricas.
     """
+    import logging
+
     logger = logging.getLogger("uvicorn.error")
     nome = str(usuario_data.nome).strip()
     email = str(usuario_data.email).strip().lower()
-    senha = str(usuario_data.senha)
 
     try:
-        senha_hash = gerar_hash_senha(senha)
+        senha_hash = gerar_hash_senha(usuario_data.senha)
     except Exception as e:
         logger.exception("Falha ao hashear senha no cadastro")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Não foi possível criar o usuário (hash): {type(e).__name__}: {e}",
+            detail=f"Não foi possível criar o usuário (hash): {type(e).__name__}",
         )
 
     insert_stmt = (
         usuario.insert()
-        .values(nome=nome, email=email, senha=senha_hash)
-        .returning(usuario.c.id, usuario.c.nome, usuario.c.email)
+        .values(nome=nome, email=email, senha=senha_hash, foto_url=None)
+        .returning(usuario.c.id, usuario.c.nome, usuario.c.email, usuario.c.foto_url)
     )
 
     try:
@@ -122,7 +119,7 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
                 status_code=500,
                 detail="Falha ao ler usuário recém-criado.",
             )
-        return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
+        return _usuario_publico(row)
 
     except HTTPException:
         raise
@@ -202,18 +199,30 @@ async def autenticar_usuario(db: Database, email: str, senha: str):
 # ---------- helpers de saída ----------
 def _usuario_publico(row) -> dict:
     """Normaliza saída do usuário (sem senha)."""
-    return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
+    try:
+        foto = row["foto_url"]
+    except (KeyError, IndexError, TypeError):
+        foto = None
+    return {
+        "id": row["id"],
+        "nome": row["nome"],
+        "email": row["email"],
+        "foto_url": foto,
+    }
 
 
 # ---------- atualizar perfil (/me PATCH) ----------
 async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) -> dict:
     valores = {}
     if data.nome is not None:
-        valores["nome"] = data.nome
+        valores["nome"] = str(data.nome).strip()
     if data.email is not None:
-        valores["email"] = data.email
+        valores["email"] = str(data.email).strip().lower()
     if data.senha is not None:
         valores["senha"] = gerar_hash_senha(data.senha)
+    if "foto_url" in data.model_fields_set:
+        # permite null explícito ou URL externa
+        valores["foto_url"] = data.foto_url
 
     if valores:
         try:
@@ -228,6 +237,16 @@ async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) 
                 )
             raise
 
+    row = await buscar_usuario_por_id(db, usuario_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return _usuario_publico(row)
+
+
+async def atualizar_foto_url(db: Database, usuario_id: int, foto_url: str | None) -> dict:
+    await db.execute(
+        usuario.update().where(usuario.c.id == usuario_id).values(foto_url=foto_url)
+    )
     row = await buscar_usuario_por_id(db, usuario_id)
     if not row:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
@@ -251,7 +270,7 @@ async def stats_usuario(db: Database, usuario_id: int) -> dict:
     seguindo_count = await db.fetch_val(seguindo_q) or 0
 
     return {
-        "usuario": {"id": urow["id"], "nome": urow["nome"], "email": urow["email"]},
+        "usuario": _usuario_publico(urow),
         "stats": {
             "posts": int(posts_count),
             "seguidores": int(seguidores_count),

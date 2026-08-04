@@ -12,6 +12,7 @@ class UsuarioCreate(UsuarioBase):
 
 class UsuarioOut(UsuarioBase):
     id: int
+    foto_url: str | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -19,3 +20,5 @@ class UsuarioUpdate(BaseModel):
     nome: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
     senha: str | None = Field(default=None, min_length=6, max_length=72)
+    # alternativa: URL externa (upload preferencial via POST /me/foto)
+    foto_url: str | None = None

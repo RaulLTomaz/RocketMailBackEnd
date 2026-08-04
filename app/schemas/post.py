@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from datetime import datetime
 
+
 class PostBase(BaseModel):
     post: str = Field(..., min_length=1, max_length=280)
 
@@ -10,14 +11,18 @@ class PostBase(BaseModel):
             raise ValueError("O conteúdo do post não pode ser vazio ou apenas espaços.")
         return v
 
+
 class PostCreate(PostBase):
     pass
+
 
 class UsuarioSimples(BaseModel):
     id: int
     nome: str
+    foto_url: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
 
 class PostResponse(PostBase):
     id: int

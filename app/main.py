@@ -2,9 +2,12 @@ import os
 import logging
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from app.database import database, engine, metadata
 from app import models  # noqa: F401 — registra tabelas no metadata
@@ -14,6 +17,17 @@ logger = logging.getLogger("uvicorn.error")
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 RUN_MIGRATIONS = os.getenv("RUN_MIGRATIONS", "0") == "1"
+UPLOADS_ROOT = Path(os.getenv("UPLOAD_DIR", "uploads/avatars")).resolve().parent
+
+
+def _ensure_schema():
+    """create_all + ALTER seguro para colunas novas em DBs já existentes."""
+    metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT")
+        )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,20 +48,20 @@ async def lifespan(app: FastAPI):
     if last_err:
         raise last_err  # derruba o app e deixa o Render mostrar o erro final
 
-    # Cria tabelas após conectar (engine sync também usa SSL em produção)
     if RUN_MIGRATIONS:
-        logger.info("RUN_MIGRATIONS=1 -> criando tabelas...")
+        logger.info("RUN_MIGRATIONS=1 -> garantindo schema...")
         try:
-            metadata.create_all(bind=engine)
-            logger.info("✅ metadata.create_all OK")
+            _ensure_schema()
+            logger.info("✅ schema OK")
         except Exception:
-            logger.exception("Falha em metadata.create_all")
+            logger.exception("Falha ao garantir schema")
             raise
 
     yield
 
     await database.disconnect()
     logger.info("✅ database.disconnect OK")
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -62,9 +76,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# arquivos locais de avatar em /media/avatars/...
+UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
+(UPLOADS_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(UPLOADS_ROOT)), name="media")
+
+
 @app.get("/healthz", tags=["Infra"])
 async def healthz():
     return {"status": "ok"}
+
 
 app.include_router(usuario.router)
 app.include_router(post.router)
