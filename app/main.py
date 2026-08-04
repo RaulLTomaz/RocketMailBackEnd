@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import database, engine, metadata
+from app import models  # noqa: F401 — registra tabelas no metadata
 from app.routers import usuario, post, seguir, like
 
 logger = logging.getLogger("uvicorn.error")
@@ -16,11 +17,6 @@ RUN_MIGRATIONS = os.getenv("RUN_MIGRATIONS", "0") == "1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if RUN_MIGRATIONS:
-        logger.info("RUN_MIGRATIONS=1 -> criando tabelas...")
-        metadata.create_all(bind=engine)
-        logger.info("✅ metadata.create_all OK")
-
     # Retry DB connect (muito comum o primeiro connect falhar no Render)
     last_err = None
     for attempt in range(1, 6):
@@ -37,6 +33,16 @@ async def lifespan(app: FastAPI):
 
     if last_err:
         raise last_err  # derruba o app e deixa o Render mostrar o erro final
+
+    # Cria tabelas após conectar (engine sync também usa SSL em produção)
+    if RUN_MIGRATIONS:
+        logger.info("RUN_MIGRATIONS=1 -> criando tabelas...")
+        try:
+            metadata.create_all(bind=engine)
+            logger.info("✅ metadata.create_all OK")
+        except Exception:
+            logger.exception("Falha em metadata.create_all")
+            raise
 
     yield
 

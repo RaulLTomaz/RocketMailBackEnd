@@ -12,7 +12,7 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select, asc, desc, func
-from sqlalchemy.exc import IntegrityError
+import logging
 import os
 
 try:
@@ -73,14 +73,18 @@ async def get_current_user(
 
 
 def _is_unique_violation(exc: Exception) -> bool:
-    if isinstance(exc, IntegrityError):
-        return True
-    if asyncpg and isinstance(exc, getattr(asyncpg, "UniqueViolationError", tuple())):
-        return True
-    # databases/asyncpg às vezes encapsula a causa
-    cause = getattr(exc, "__cause__", None) or getattr(exc, "orig", None)
-    if cause is not None and cause is not exc:
-        return _is_unique_violation(cause)
+    """Detecta unique violation mesmo quando databases/asyncpg encapsulam a exceção."""
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if asyncpg and isinstance(cur, getattr(asyncpg, "UniqueViolationError", tuple())):
+            return True
+        name = type(cur).__name__.lower()
+        text = str(cur).lower()
+        if "uniqueviolation" in name or "unique" in text or "duplicate key" in text:
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "orig", None)
     return False
 
 
@@ -91,20 +95,33 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
     Retorna apenas {id, nome, email}.
     Lança HTTPException 409 para e-mail duplicado e 400 para falhas genéricas.
     """
-    senha_hash = gerar_hash_senha(usuario_data.senha)
-    insert_stmt = usuario.insert().values(
-        nome=usuario_data.nome,
-        email=usuario_data.email,
-        senha=senha_hash,
+    logger = logging.getLogger("uvicorn.error")
+    nome = str(usuario_data.nome).strip()
+    email = str(usuario_data.email).strip().lower()
+    senha = str(usuario_data.senha)
+
+    try:
+        senha_hash = gerar_hash_senha(senha)
+    except Exception as e:
+        logger.exception("Falha ao hashear senha no cadastro")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível criar o usuário (hash): {type(e).__name__}: {e}",
+        )
+
+    insert_stmt = (
+        usuario.insert()
+        .values(nome=nome, email=email, senha=senha_hash)
+        .returning(usuario.c.id, usuario.c.nome, usuario.c.email)
     )
 
     try:
-        # Em Postgres, `execute` retorna o PK inserido
-        user_id = await db.execute(insert_stmt)
-
-        row = await db.fetch_one(usuario.select().where(usuario.c.id == user_id))
+        row = await db.fetch_one(insert_stmt)
         if not row:
-            raise HTTPException(status_code=500, detail="Falha ao ler usuário recém-criado.")
+            raise HTTPException(
+                status_code=500,
+                detail="Falha ao ler usuário recém-criado.",
+            )
         return {"id": row["id"], "nome": row["nome"], "email": row["email"]}
 
     except HTTPException:
@@ -116,9 +133,10 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="E-mail já cadastrado.",
             )
+        logger.exception("Falha ao criar usuário: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Não foi possível criar o usuário.",
+            detail=f"Não foi possível criar o usuário ({type(e).__name__}: {e})",
         )
 
 
