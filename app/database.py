@@ -31,18 +31,32 @@ SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "", 1)
 metadata = MetaData()
 Base = declarative_base()
 
-# SSL só em produção (ou se DATABASE_SSL=1)
+# SSL em produção / quando DATABASE_SSL=1
+# Render Postgres exige SSL, mas o certificado costuma falhar na verificação estrita.
 use_ssl = ENV in ("production", "prod") or os.getenv("DATABASE_SSL", "0") == "1"
+ssl_verify = os.getenv("DATABASE_SSL_VERIFY", "0") == "1"
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    if not ssl_verify:
+        # Compatível com Render / certificados self-signed do managed Postgres
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
 
 engine_kwargs = {"pool_pre_ping": True}
 if use_ssl:
-    engine_kwargs["connect_args"] = {"sslmode": "require"}
+    # require = criptografa sem verificar CA (verify-full exigiria CA válida)
+    engine_kwargs["connect_args"] = {
+        "sslmode": "verify-full" if ssl_verify else "require"
+    }
 
 engine = create_engine(SYNC_DATABASE_URL, **engine_kwargs)
 
 if use_ssl:
-    ssl_context = ssl.create_default_context()
-    database = Database(DATABASE_URL, ssl=ssl_context)
+    database = Database(DATABASE_URL, ssl=_build_ssl_context())
 else:
     database = Database(DATABASE_URL)
 
