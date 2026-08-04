@@ -4,8 +4,18 @@ from databases import Database
 from app.database import get_database
 from app.crud import seguir as seguir_crud
 from app.crud.usuario import get_current_user
+from app.schemas.usuario import UsuarioOut
 
 router = APIRouter(prefix="/seguir", tags=["Seguir"])
+
+
+@router.get("/seguidos", response_model=list[UsuarioOut])
+async def listar_seguidos(
+    db: Database = Depends(get_database),
+    seguidor_id: int = Depends(get_current_user),
+):
+    """Lista usuários que o autenticado segue."""
+    return await seguir_crud.listar_seguidos(db, seguidor_id)
 
 
 @router.post("/")
