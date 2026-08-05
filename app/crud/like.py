@@ -1,7 +1,8 @@
 from typing import Dict, List
+
 from databases import Database
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.like import like
@@ -18,10 +19,7 @@ async def _garantir_post_existe(db: Database, post_id: int) -> None:
 
 
 async def dar_like(db: Database, usuario_id: int, post_id: int) -> dict:
-    """
-    Idempotente: se já existir, não falha.
-    Usa ON CONFLICT na PK (like_pkey).
-    """
+    """Idempotente via ON CONFLICT DO NOTHING na PK composta."""
     await _garantir_post_existe(db, post_id)
     stmt = insert(like).values(usuario_id=usuario_id, post_id=post_id)
     stmt = stmt.on_conflict_do_nothing(constraint="like_pkey")
@@ -30,9 +28,7 @@ async def dar_like(db: Database, usuario_id: int, post_id: int) -> dict:
 
 
 async def remover_like(db: Database, usuario_id: int, post_id: int) -> dict:
-    """
-    Remove o like, mesmo que não exista (idempotente para o front).
-    """
+    """Idempotente: remover like inexistente não gera erro."""
     q = like.delete().where(
         (like.c.usuario_id == usuario_id) & (like.c.post_id == post_id)
     )
@@ -41,17 +37,11 @@ async def remover_like(db: Database, usuario_id: int, post_id: int) -> dict:
 
 
 async def contar_likes(db: Database, post_id: int) -> int:
-    """
-    Número total de likes de um post.
-    """
     q = select(func.count()).select_from(like).where(like.c.post_id == post_id)
     return int(await db.fetch_val(q))
 
 
 async def curtiu(db: Database, usuario_id: int, post_id: int) -> bool:
-    """
-    Se o usuário atual curtiu o post.
-    """
     q = (
         select(func.count())
         .select_from(like)
@@ -61,9 +51,6 @@ async def curtiu(db: Database, usuario_id: int, post_id: int) -> bool:
 
 
 async def resumo_like(db: Database, usuario_id: int, post_id: int) -> dict:
-    """
-    Resumo para um único post: {post_id, count, liked_by_me}.
-    """
     count = await contar_likes(db, post_id)
     liked = await curtiu(db, usuario_id, post_id)
     return {"post_id": post_id, "count": count, "liked_by_me": liked}
@@ -73,8 +60,8 @@ async def batch_resumo_like(
     db: Database, usuario_id: int, post_ids: List[int]
 ) -> Dict[int, dict]:
     """
-    Resumo em lote. Ex.: { 1: {...}, 2: {...} }
-    OBS: no JSON as chaves serão strings.
+    Agrega contagem e liked_by_me em uma passagem.
+    No JSON as chaves numéricas viram string (limitação do JSON).
     """
     if not post_ids:
         return {}

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.schemas.post import PostResponse
 
@@ -22,7 +22,7 @@ class UsuarioUpdate(BaseModel):
     nome: str | None = Field(default=None, min_length=1, max_length=100)
     email: EmailStr | None = None
     senha: str | None = Field(default=None, min_length=6, max_length=72)
-    # alternativa: URL externa (upload preferencial via POST /me/foto)
+    # Alternativa ao multipart: URL absoluta já hospedada (ex.: CDN externa).
     foto_url: str | None = None
 
 

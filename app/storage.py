@@ -1,4 +1,10 @@
-"""Upload de fotos de perfil: Cloudinary em produção; disco local só em dev/test."""
+"""
+Upload de fotos de perfil.
+
+Em produção o disco do Render é efêmero — exige Cloudinary.
+Em dev/test permite gravar em /media/avatars como fallback.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -35,6 +41,7 @@ def _is_production() -> bool:
 
 
 def _normalize_secret(value: str | None) -> str | None:
+    """Remove aspas acidentais coladas no painel do Render."""
     if value is None:
         return None
     cleaned = value.strip().strip('"').strip("'")
@@ -57,7 +64,7 @@ def cloudinary_enabled() -> bool:
 
 
 def cloudinary_config_error() -> str | None:
-    """Retorna mensagem se a config existir mas estiver inválida; None se ok/ausente."""
+    """Mensagem se CLOUDINARY_URL existe mas está malformada; None se ok ou ausente."""
     url = cloudinary_url()
     if url and not _CLOUDINARY_URL_RE.match(url):
         return (
@@ -94,7 +101,7 @@ def _ensure_https(url: str) -> str:
 
 
 def _sniff_image(data: bytes) -> str | None:
-    """Retorna content-type pela assinatura do arquivo, ou None."""
+    """Detecta MIME pela assinatura do arquivo (mais confiável que o Content-Type do client)."""
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -150,12 +157,17 @@ def _public_url_for_local(filename: str) -> str:
 def _map_cloudinary_error(exc: Exception) -> HTTPException:
     msg = str(exc) or type(exc).__name__
     lower = msg.lower()
-    if any(x in lower for x in ("invalid", "unauthorized", "api key", "authentication", "401")):
+    if any(
+        x in lower
+        for x in ("invalid", "unauthorized", "api key", "authentication", "401")
+    ):
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Credenciais Cloudinary inválidas: {type(exc).__name__}: {msg}",
         )
-    if any(x in lower for x in ("timeout", "timed out", "connection", "network", "resolve")):
+    if any(
+        x in lower for x in ("timeout", "timed out", "connection", "network", "resolve")
+    ):
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Timeout/rede ao falar com Cloudinary: {type(exc).__name__}: {msg}",
@@ -210,7 +222,7 @@ def _upload_cloudinary_sync(data: bytes, content_type: str, usuario_id: int) -> 
 
 
 async def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
-    # SDK síncrono — não bloquear o event loop (evita timeout/worker morto sem CORS)
+    # SDK síncrono: to_thread evita bloquear o event loop (timeout/worker morto sem CORS).
     try:
         return await asyncio.to_thread(
             _upload_cloudinary_sync, data, content_type, usuario_id
@@ -236,10 +248,7 @@ def _upload_local(data: bytes, ext: str, usuario_id: int) -> str:
 
 
 async def salvar_foto_perfil(file: UploadFile, usuario_id: int) -> str:
-    """
-    Em produção (Render) exige Cloudinary — disco local é efêmero.
-    Em dev/test permite fallback local em /media/avatars.
-    """
+    """Produção exige Cloudinary; dev/test pode usar disco local."""
     data, content_type, ext = await _read_validated(file)
 
     cfg_err = cloudinary_config_error()
@@ -297,7 +306,7 @@ def remover_foto_cloudinary_se_houver(usuario_id: int) -> None:
 
 
 def is_ephemeral_media_url(foto_url: str | None) -> bool:
-    """True se a URL aponta para storage local /media/avatars (efêmero no Render)."""
+    """Identifica URLs locais que somem após redeploy no Render."""
     if not foto_url:
         return False
     return "/media/avatars/" in foto_url

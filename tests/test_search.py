@@ -1,4 +1,5 @@
 """GET /usuario/search — Explore."""
+
 from httpx import AsyncClient
 
 from tests.helpers import auth_header, cria_post, cria_usuario_com_token
@@ -39,7 +40,6 @@ async def test_search_parcial_case_insensitive_com_posts(client: AsyncClient):
     assert (await cria_post(client, token_a, "post novo ana")).status_code == 200
     assert (await cria_post(client, token_b, "post da carla")).status_code == 200
 
-    # "ana" case-insensitive deve achar Ana Maria; não Bruno
     resp = await client.get(
         "/usuario/search",
         params={"q": "ANA", "limit": 20, "posts_per_user": 5},
@@ -53,12 +53,10 @@ async def test_search_parcial_case_insensitive_com_posts(client: AsyncClient):
     assert "senha" not in hits[0]["usuario"]
     assert "email" in hits[0]["usuario"]
     assert len(hits[0]["posts"]) == 2
-    # posts mais recentes primeiro
     assert hits[0]["posts"][0]["post"] == "post novo ana"
     assert hits[0]["posts"][0]["usuario"]["id"] == a["id"]
     assert "foto_url" in hits[0]["posts"][0]["usuario"]
 
-    # parcial "sil" → carla silva
     resp2 = await client.get(
         "/usuario/search",
         params={"q": "Sil"},
@@ -86,9 +84,8 @@ async def test_search_limita_posts_por_usuario(client: AsyncClient):
 
 
 async def test_search_nao_conflita_com_id(client: AsyncClient):
-    """GET /usuario/search não deve ser capturado por /{usuario_id}."""
+    """Garante que /search não é capturado por /{usuario_id} (evitaria 422)."""
     user, token = await cria_usuario_com_token(client, nome="Search Route")
-    # se conflitar, FastAPI tentaria parsear "search" como int → 422
     resp = await client.get(
         "/usuario/search",
         params={"q": "Search"},
@@ -97,7 +94,6 @@ async def test_search_nao_conflita_com_id(client: AsyncClient):
     assert resp.status_code == 200
     assert any(h["usuario"]["id"] == user["id"] for h in resp.json())
 
-    # /usuario/{id} continua funcionando
     by_id = await client.get(f"/usuario/{user['id']}")
     assert by_id.status_code == 200
     assert by_id.json()["id"] == user["id"]

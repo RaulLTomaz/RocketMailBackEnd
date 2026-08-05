@@ -1,4 +1,5 @@
 """Seguir / deixar de seguir."""
+
 from httpx import AsyncClient
 
 from tests.helpers import (
@@ -26,7 +27,6 @@ async def test_seguir_e_deixar_de_seguir(client: AsyncClient):
     assert body["seguidor_id"] == a["id"]
     assert body["seguido_id"] == b["id"]
 
-    # idempotente (não explode em duplicata)
     resp2 = await seguir(client, token_a, b["id"])
     assert resp2.status_code == 200
 
@@ -55,7 +55,7 @@ async def test_seguir_usuario_inexistente(client: AsyncClient):
 
 
 async def test_seguir_nao_usa_seguidor_id_da_query(client: AsyncClient):
-    """IDOR: query seguidor_id deve ser ignorada; usa só o token."""
+    """IDOR: seguidor_id na query deve ser ignorado; vale só o JWT."""
     a, token_a = await cria_usuario_com_token(client)
     b, _ = await cria_usuario_com_token(client)
     c, _ = await cria_usuario_com_token(client)

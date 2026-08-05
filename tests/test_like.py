@@ -1,4 +1,5 @@
 """Likes: like, unlike, resumo, batch e erros."""
+
 from httpx import AsyncClient
 
 from tests.helpers import auth_header, cria_post, cria_usuario_com_token
@@ -24,7 +25,6 @@ async def test_like_flows(client: AsyncClient):
     assert r.json()["count"] == 1
     assert r.json()["liked_by_me"] is True
 
-    # idempotente
     await client.post(f"/like/{post_id}", headers=auth_header(token_a))
     r = await client.get(f"/like/{post_id}", headers=auth_header(token_a))
     assert r.json()["count"] == 1
@@ -33,11 +33,12 @@ async def test_like_flows(client: AsyncClient):
     assert r.json()["count"] == 1
     assert r.json()["liked_by_me"] is False
 
-    # unlike de quem não curtiu é idempotente
     r = await client.delete(f"/like/{post_id}", headers=auth_header(token_b))
     assert r.status_code == 200
     assert r.json()["liked"] is False
-    assert (await client.get(f"/like/{post_id}", headers=auth_header(token_a))).json()["count"] == 1
+    assert (await client.get(f"/like/{post_id}", headers=auth_header(token_a))).json()[
+        "count"
+    ] == 1
 
     r = await client.delete(f"/like/{post_id}", headers=auth_header(token_a))
     assert r.status_code == 200

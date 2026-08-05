@@ -1,4 +1,5 @@
-from sqlalchemy import Table, Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Table, Text
+
 from app.database import metadata
 
 usuario = Table(

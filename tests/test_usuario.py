@@ -1,4 +1,5 @@
 """Usuário: criar, login, buscar, /me, validações e erros."""
+
 from httpx import AsyncClient
 
 from tests.helpers import (
@@ -33,7 +34,10 @@ async def test_criar_usuario_email_duplicado(client: AsyncClient):
         json={"nome": "Outro", "email": email, "senha": "senha123"},
     )
     assert resp.status_code == 409
-    assert "e-mail" in resp.json()["detail"].lower() or "email" in resp.json()["detail"].lower()
+    assert (
+        "e-mail" in resp.json()["detail"].lower()
+        or "email" in resp.json()["detail"].lower()
+    )
 
 
 async def test_criar_usuario_senha_curta(client: AsyncClient):
@@ -117,7 +121,7 @@ async def test_me_fluxo_completo(client: AsyncClient):
     assert resp_delete.json()["deleted"] is True
 
     assert (await client.get(f"/usuario/{user['id']}")).status_code == 404
-    # token de usuário deletado não autentica mais
+    # Conta removida: token ainda assina, mas get_current_user exige usuário no banco.
     assert (await client.get("/usuario/me", headers=headers)).status_code == 401
 
 

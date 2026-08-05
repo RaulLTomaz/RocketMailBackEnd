@@ -1,4 +1,5 @@
 """Infra / healthcheck."""
+
 from httpx import AsyncClient
 
 

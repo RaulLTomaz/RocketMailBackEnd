@@ -1,4 +1,5 @@
 """Perfil público: stats e timeline."""
+
 import asyncio
 
 from httpx import AsyncClient

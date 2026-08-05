@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Query
 from databases import Database
+from fastapi import APIRouter, Depends, Query
 
-from app.database import get_database
 from app.crud import seguir as seguir_crud
 from app.crud.usuario import get_current_user
+from app.database import get_database
 from app.schemas.usuario import UsuarioOut
 
 router = APIRouter(prefix="/seguir", tags=["Seguir"])
@@ -14,7 +14,6 @@ async def listar_seguidos(
     db: Database = Depends(get_database),
     seguidor_id: int = Depends(get_current_user),
 ):
-    """Lista usuários que o autenticado segue."""
     return await seguir_crud.listar_seguidos(db, seguidor_id)
 
 
@@ -24,7 +23,7 @@ async def seguir_usuario(
     db: Database = Depends(get_database),
     seguidor_id: int = Depends(get_current_user),
 ):
-    """Segue um usuário. O seguidor é sempre o usuário autenticado."""
+    """Segue um usuário. O seguidor é sempre o autenticado (JWT)."""
     return await seguir_crud.seguir_usuario(db, seguidor_id, seguido_id)
 
 
@@ -34,5 +33,5 @@ async def deixar_de_seguir(
     db: Database = Depends(get_database),
     seguidor_id: int = Depends(get_current_user),
 ):
-    """Deixa de seguir um usuário. O seguidor é sempre o usuário autenticado."""
+    """Deixa de seguir. O seguidor é sempre o autenticado (JWT)."""
     return await seguir_crud.deixar_de_seguir(db, seguidor_id, seguido_id)

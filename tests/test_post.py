@@ -1,4 +1,5 @@
 """Posts: criar, listar, feed, deletar e validações."""
+
 import asyncio
 
 from httpx import AsyncClient
@@ -115,9 +116,7 @@ async def test_feed_ordem_temporal_dentro_dos_grupos(client: AsyncClient):
     await asyncio.sleep(0.01)
     assert (await cria_post(client, token_b, "B_newest")).status_code == 200
 
-    feed = (
-        await client.get("/post/feed", headers=auth_header(token_a))
-    ).json()
+    feed = (await client.get("/post/feed", headers=auth_header(token_a))).json()
 
     assert feed[0]["usuario"]["id"] == b["id"]
     assert feed[0]["post"] == "B_newest"

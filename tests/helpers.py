@@ -19,7 +19,7 @@ async def cria_usuario(
     email: str | None = None,
     senha: str = "senha123",
 ) -> dict:
-    """Cria usuário via API e retorna o JSON {id, nome, email, _senha}."""
+    """Cria usuário via API; inclui `_senha` só para os testes reutilizarem no login."""
     payload = {
         "nome": nome or f"User {uuid4().hex[:6]}",
         "email": email or email_unico(),

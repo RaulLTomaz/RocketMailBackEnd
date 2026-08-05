@@ -20,7 +20,7 @@ async def seguir_usuario(db: Database, seguidor_id: int, seguido_id: int):
             detail="Usuário a seguir não encontrado.",
         )
 
-    # Idempotente: duplicata não gera 500
+    # Idempotente: seguir de novo o mesmo usuário não deve estourar 500 por PK.
     stmt = insert(seguir).values(seguidor_id=seguidor_id, seguido_id=seguido_id)
     stmt = stmt.on_conflict_do_nothing()
     await db.execute(stmt)
@@ -30,9 +30,9 @@ async def seguir_usuario(db: Database, seguidor_id: int, seguido_id: int):
 async def listar_seguidos(db: Database, seguidor_id: int):
     query = usuario.select().where(
         usuario.c.id.in_(
-            seguir.select().with_only_columns(seguir.c.seguido_id).where(
-                seguir.c.seguidor_id == seguidor_id
-            )
+            seguir.select()
+            .with_only_columns(seguir.c.seguido_id)
+            .where(seguir.c.seguidor_id == seguidor_id)
         )
     )
     return await db.fetch_all(query)

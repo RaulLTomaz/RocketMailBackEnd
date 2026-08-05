@@ -1,4 +1,5 @@
 """Upload / remoção de foto de perfil."""
+
 from io import BytesIO
 
 from httpx import AsyncClient
@@ -107,7 +108,7 @@ async def test_producao_sem_cloudinary_retorna_503(client: AsyncClient, monkeypa
 
 
 async def test_cloudinary_erro_vira_502_nao_crash(client: AsyncClient, monkeypatch):
-    """Exceção do SDK vira HTTPException (resposta FastAPI com CORS), não derruba a request."""
+    """Falha do SDK deve virar HTTP 502/503 (com CORS), não derrubar a request."""
     import app.storage as storage
 
     monkeypatch.setenv("CLOUDINARY_URL", "cloudinary://key:secret@demo")
@@ -126,7 +127,7 @@ async def test_cloudinary_erro_vira_502_nao_crash(client: AsyncClient, monkeypat
     assert resp.status_code in (502, 503)
     detail = resp.json()["detail"]
     assert "Invalid" in detail or "Cloudinary" in detail or "RuntimeError" in detail
-    # Com Origin no request, o CORSMiddleware anexa ACAO na resposta de erro
+    # Sem Origin o ASGI test não recebe ACAO; com Origin o middleware anexa o header.
     assert resp.headers.get("access-control-allow-origin") in (
         "*",
         "http://localhost:8081",

@@ -1,6 +1,10 @@
-import os
-import logging
+"""
+Bootstrap da API: lifespan (DB, schema, Cloudinary), CORS e montagem dos routers.
+"""
+
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,10 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from app import models  # noqa: F401 — registra tabelas no MetaData antes do create_all
 from app.database import database, engine, metadata
-from app import models  # noqa: F401 — registra tabelas no metadata
-from app.routers import usuario, post, seguir, like
-from app.storage import cloudinary_enabled, cloudinary_config_error, cloudinary_url
+from app.routers import like, post, seguir, usuario
+from app.storage import cloudinary_config_error, cloudinary_enabled, cloudinary_url
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -22,18 +26,19 @@ UPLOADS_ROOT = Path(os.getenv("UPLOAD_DIR", "uploads/avatars")).resolve().parent
 
 
 def _ensure_schema():
-    """create_all + ALTER seguro para colunas novas em DBs já existentes."""
+    """
+    create_all não altera tabelas existentes; o ALTER cobre colunas novas
+    (ex.: foto_url) em bancos que já estavam em produção.
+    """
     metadata.create_all(bind=engine)
     with engine.begin() as conn:
-        conn.execute(
-            text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT")
-        )
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT"))
 
 
 async def _limpar_foto_urls_efemeras():
     """
-    Zera foto_url que apontam para /media/avatars (arquivos somem no redeploy do Render).
-    Cloudinary HTTPS permanece intacto.
+    URLs /media/avatars deixam de existir após redeploy no Render (disco efêmero).
+    Zera esses valores para o front não exibir avatares quebrados; Cloudinary permanece.
     """
     count = await database.fetch_val(
         text(
@@ -57,7 +62,7 @@ async def _limpar_foto_urls_efemeras():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Retry DB connect (muito comum o primeiro connect falhar no Render)
+    # No cold start do Render o Postgres pode demorar a aceitar conexões.
     last_err = None
     for attempt in range(1, 6):
         try:
@@ -69,10 +74,10 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             last_err = e
             logger.exception("⚠️ Falha ao conectar no banco: %s", e)
-            await asyncio.sleep(2 * attempt)  # 2s,4s,6s,8s,10s
+            await asyncio.sleep(2 * attempt)
 
     if last_err:
-        raise last_err  # derruba o app e deixa o Render mostrar o erro final
+        raise last_err
 
     if RUN_MIGRATIONS:
         logger.info("RUN_MIGRATIONS=1 -> garantindo schema...")
@@ -88,7 +93,7 @@ async def lifespan(app: FastAPI):
         if cfg_err:
             logger.error("⚠️ %s", cfg_err)
         else:
-            # não loga o secret — só confirma presença/formato
+            # Loga só o cloud name — nunca a URL completa (contém o secret).
             url = cloudinary_url()
             hint = url.split("@")[-1] if url and "@" in url else "vars CLOUDINARY_*"
             logger.info(
@@ -116,7 +121,12 @@ async def lifespan(app: FastAPI):
     logger.info("✅ database.disconnect OK")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="RocketMail API",
+    description="API REST do RocketMail — posts, feed, seguir, likes e perfil.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
 use_wildcard = (not origins_list) or ("*" in origins_list)
@@ -124,12 +134,13 @@ use_wildcard = (not origins_list) or ("*" in origins_list)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if use_wildcard else origins_list,
+    # Com wildcard o browser exige credentials=False.
     allow_credentials=False if use_wildcard else True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# arquivos locais de avatar em /media/avatars/... (apenas dev/test)
+# Fallback de avatares em disco (dev/test). Em produção o caminho é Cloudinary.
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 (UPLOADS_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(UPLOADS_ROOT)), name="media")

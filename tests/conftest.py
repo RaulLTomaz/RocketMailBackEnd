@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-# Configura env de teste ANTES de importar a app (database.py lê no import)
+# database.py lê env no import — precisa estar pronto antes de importar a app.
 os.environ.setdefault("PYTHON_ENV", "test")
 _env_test = Path(__file__).resolve().parent.parent / ".env.test"
 if _env_test.exists():
@@ -14,13 +14,14 @@ if not os.getenv("DATABASE_URL") and os.getenv("DATABASE_URL_TEST"):
 
 import asyncio
 import platform
+
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from app.main import app
-from app.database import database, engine, metadata
 from app import models  # noqa: F401
+from app.database import database, engine, metadata
+from app.main import app
 
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

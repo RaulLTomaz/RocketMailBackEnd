@@ -1,10 +1,12 @@
-from sqlalchemy import select, desc, asc, case, bindparam, Integer, literal
-from databases import Database
 from datetime import datetime, timezone
+
+from databases import Database
 from fastapi import HTTPException
+from sqlalchemy import Integer, asc, bindparam, case, desc, literal, select
+
 from app.models.post import post
-from app.models.usuario import usuario
 from app.models.seguir import seguir
+from app.models.usuario import usuario
 from app.schemas.post import PostCreate
 
 
@@ -52,14 +54,13 @@ async def create_post(db: Database, post_data: PostCreate, usuario_id: int):
     return _row_to_response(row)
 
 
-async def get_posts(db: Database, limit: int = 50, offset: int = 0, sort: str = "-data"):
-    """
-    Lista posts com paginação.
-    sort:
-        - "-data" (default) => data_criacao desc
-        - "data"            => data_criacao asc
-    """
-    order_col = desc(post.c.data_criacao) if sort == "-data" else asc(post.c.data_criacao)
+async def get_posts(
+    db: Database, limit: int = 50, offset: int = 0, sort: str = "-data"
+):
+    """sort: `-data` (mais recente primeiro) ou `data` (crescente)."""
+    order_col = (
+        desc(post.c.data_criacao) if sort == "-data" else asc(post.c.data_criacao)
+    )
 
     query = (
         select(*_POST_USER_COLS)
@@ -75,9 +76,6 @@ async def get_posts(db: Database, limit: int = 50, offset: int = 0, sort: str = 
 async def get_posts_por_usuario(
     db: Database, usuario_id: int, limit: int = 50, offset: int = 0
 ):
-    """
-    Timeline pública do usuário (paginada).
-    """
     query = (
         select(*_POST_USER_COLS)
         .select_from(post.join(usuario, post.c.usuario_id == usuario.c.id))
@@ -92,10 +90,11 @@ async def get_posts_por_usuario(
 
 async def get_feed(db: Database, viewer_id: int, limit: int = 50, offset: int = 0):
     """
-    Feed:
-        - Primeiro posts de quem o viewer segue (prioridade=0), depois os demais (prioridade=1)
-        - Dentro de cada grupo, ordem decrescente por data.
-        - Binda viewer_id no próprio bindparam (sem passar values no fetch_all).
+    Prioriza posts de quem o viewer segue (prioridade 0) e depois o restante (1);
+    dentro de cada grupo ordena por data decrescente.
+
+    O viewer_id vai no próprio bindparam (com tipo Integer) para o asyncpg
+    não inferir o parâmetro como string.
     """
     viewer_bp = bindparam("viewer_id", type_=Integer, value=viewer_id)
 
@@ -124,6 +123,8 @@ async def delete_post(db: Database, post_id: int, usuario_id: int):
     if not dono_row:
         raise HTTPException(status_code=404, detail="Post não encontrado")
     if dono_row.usuario_id != usuario_id:
-        raise HTTPException(status_code=403, detail="Sem permissão para deletar este post")
+        raise HTTPException(
+            status_code=403, detail="Sem permissão para deletar este post"
+        )
     await db.execute(post.delete().where(post.c.id == post_id))
     return {"deleted": True, "id": post_id}

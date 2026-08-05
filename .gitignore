@@ -1,14 +1,30 @@
-# .gitignore
 venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Ambiente / secrets
 .env
 .env.test
+.env.local
+
+# Testes / cobertura
 .pytest_cache/
 .coverage
 htmlcov/
-*.sqlite3
-dist/
-build/
-*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Uploads locais de avatar
 uploads/
+
+# IDE / SO
+.idea/
+.vscode/
+*.sqlite3
+.DS_Store
+Thumbs.db

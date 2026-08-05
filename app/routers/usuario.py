@@ -1,17 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.security import OAuth2PasswordRequestForm
 from databases import Database
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.security import OAuth2PasswordRequestForm
 from starlette import status
 
-from app.database import get_database
-from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate, UsuarioSearchHit
-from app.crud import usuario as crud_usuario
 from app.crud import post as post_crud
+from app.crud import usuario as crud_usuario
 from app.crud.usuario import autenticar_usuario, get_current_user
+from app.database import get_database
+from app.schemas.usuario import (
+    UsuarioCreate,
+    UsuarioOut,
+    UsuarioSearchHit,
+    UsuarioUpdate,
+)
 from app.storage import (
-    salvar_foto_perfil,
     remover_arquivo_local_se_houver,
     remover_foto_cloudinary_se_houver,
+    salvar_foto_perfil,
 )
 
 router = APIRouter(prefix="/usuario", tags=["Usuário"])
@@ -37,7 +42,6 @@ async def login(
     description="Cria um usuário com `nome`, `email` e `senha`.",
 )
 async def criar(usuario: UsuarioCreate, db: Database = Depends(get_database)):
-    # Erros (409 e-mail duplicado, 400 genérico) já são tratados no CRUD via HTTPException
     return await crud_usuario.criar_usuario(db, usuario)
 
 
@@ -91,7 +95,7 @@ async def upload_foto_me(
     except HTTPException:
         raise
     except Exception as e:
-        # Garante resposta FastAPI (com CORS) em vez de derrubar o worker
+        # Converte crash não tratado em resposta HTTP para o CORSMiddleware anexar ACAO.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Falha ao processar upload: {type(e).__name__}: {e}",
@@ -142,6 +146,7 @@ async def delete_me(
     return {"deleted": True}
 
 
+# Precisa vir antes de /{usuario_id}; caso contrário "search" vira path param e gera 422.
 @router.get(
     "/search",
     response_model=list[UsuarioSearchHit],
@@ -204,4 +209,6 @@ async def posts_do_usuario(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    return await post_crud.get_posts_por_usuario(db, usuario_id, limit=limit, offset=offset)
+    return await post_crud.get_posts_por_usuario(
+        db, usuario_id, limit=limit, offset=offset
+    )

@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, Query
 from databases import Database
-from app.database import get_database
+from fastapi import APIRouter, Depends, Query
+
 from app.crud import post as post_crud
 from app.crud.usuario import get_current_user
+from app.database import get_database
 from app.schemas.post import PostCreate
 
 router = APIRouter(prefix="/post", tags=["Post"])
+
 
 @router.post(
     "/",
@@ -19,10 +21,14 @@ async def create_post(
 ):
     return await post_crud.create_post(db, post_in, usuario_id)
 
+
 @router.get(
     "/",
     summary="Listar posts",
-    description="Lista posts com paginação e ordenação por data (`-data` para decrescente, `data` para crescente).",
+    description=(
+        "Lista posts com paginação e ordenação por data "
+        "(`-data` decrescente, `data` crescente)."
+    ),
 )
 async def read_posts(
     db: Database = Depends(get_database),
@@ -33,10 +39,14 @@ async def read_posts(
 ):
     return await post_crud.get_posts(db, limit=limit, offset=offset, sort=sort)
 
+
 @router.get(
     "/feed",
     summary="Feed priorizado",
-    description="Retorna o feed priorizando posts de quem o usuário autenticado segue; depois os demais, ambos por ordem decrescente de data.",
+    description=(
+        "Prioriza posts de quem o usuário autenticado segue; "
+        "depois os demais, ambos por data decrescente."
+    ),
 )
 async def read_feed(
     db: Database = Depends(get_database),
@@ -44,12 +54,15 @@ async def read_feed(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    return await post_crud.get_feed(db, viewer_id=usuario_id, limit=limit, offset=offset)
+    return await post_crud.get_feed(
+        db, viewer_id=usuario_id, limit=limit, offset=offset
+    )
+
 
 @router.delete(
     "/{post_id}",
     summary="Excluir post",
-    description="Exclui um post se, e somente se, o usuário autenticado for o dono do post.",
+    description="Exclui o post somente se o autenticado for o dono.",
 )
 async def delete_post(
     post_id: int,

@@ -1,22 +1,24 @@
+import os
 from datetime import datetime, timedelta, timezone
-from app.models.usuario import usuario
-from app.models.seguir import seguir
-from app.models.post import post
-from app.models.like import like
-from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
+
+from databases import Database
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy import asc, desc, func, select
+from sqlalchemy.exc import IntegrityError
+
 from app.crud.seguir import remover_todas_as_relacoes_do_usuario
 from app.database import get_database
-from databases import Database
-from fastapi import HTTPException, Depends, status
-from passlib.context import CryptContext
-from jose import jwt, JWTError
-from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select, asc, desc, func
-from sqlalchemy.exc import IntegrityError
-import os
+from app.models.like import like
+from app.models.post import post
+from app.models.seguir import seguir
+from app.models.usuario import usuario
+from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
 
 try:
-    import asyncpg  # driver comum no Render para Postgres
+    import asyncpg
 except Exception:  # pragma: no cover
     asyncpg = None
 
@@ -42,7 +44,9 @@ def criar_token_acesso(data: dict):
     to_encode.update(
         {
             "iat": int(now.timestamp()),
-            "exp": int((now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
+            "exp": int(
+                (now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()
+            ),
         }
     )
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -73,23 +77,24 @@ async def get_current_user(
 
 
 def _is_unique_violation(exc: Exception) -> bool:
+    """
+    Detecta violação de UNIQUE mesmo quando `databases` encapsula o erro do asyncpg
+    em outra exception (nem sempre chega como IntegrityError/UniqueViolation puro).
+    """
     if isinstance(exc, IntegrityError):
         return True
     if asyncpg and isinstance(exc, getattr(asyncpg, "UniqueViolationError", tuple())):
         return True
-    # databases/asyncpg às vezes encapsula a causa
     cause = getattr(exc, "__cause__", None) or getattr(exc, "orig", None)
     if cause is not None and cause is not exc:
         return _is_unique_violation(cause)
     return False
 
 
-# ---------- criação de usuário ----------
 async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
     """
-    Cria usuário com senha hasheada.
-    Retorna apenas {id, nome, email}.
-    Lança HTTPException 409 para e-mail duplicado e 400 para falhas genéricas.
+    Cria usuário e devolve dados públicos.
+    Em falha genérica o detail inclui o tipo da exception para diagnóstico em produção.
     """
     import logging
 
@@ -106,6 +111,7 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
             detail=f"Não foi possível criar o usuário (hash): {type(e).__name__}",
         )
 
+    # RETURNING evita um SELECT extra e a ambiguidade do PK retornado por execute().
     insert_stmt = (
         usuario.insert()
         .values(nome=nome, email=email, senha=senha_hash, foto_url=None)
@@ -137,15 +143,12 @@ async def criar_usuario(db: Database, usuario_data: UsuarioCreate) -> dict:
         )
 
 
-# ---------- listagem com ordenação ----------
-async def listar_usuarios(db: Database, limit: int = 50, offset: int = 0, sort: str = "nome"):
+async def listar_usuarios(
+    db: Database, limit: int = 50, offset: int = 0, sort: str = "nome"
+):
     """
     Lista usuários com paginação.
-    sort:
-        - "nome" (default)  => nome asc
-        - "-nome"           => nome desc
-        - "id"              => id asc
-        - "-id"             => id desc
+    sort: nome | -nome | id | -id (prefixo '-' = decrescente).
     """
     if sort == "-nome":
         order_col = desc(usuario.c.nome)
@@ -156,12 +159,7 @@ async def listar_usuarios(db: Database, limit: int = 50, offset: int = 0, sort: 
     else:
         order_col = asc(usuario.c.nome)
 
-    query = (
-        select(usuario)
-        .order_by(order_col)
-        .limit(limit)
-        .offset(offset)
-    )
+    query = select(usuario).order_by(order_col).limit(limit).offset(offset)
     return await db.fetch_all(query)
 
 
@@ -172,7 +170,8 @@ async def buscar_usuario_por_id(db: Database, usuario_id: int):
 
 async def deletar_usuario(db: Database, usuario_id: int):
     async with db.transaction():
-        # Likes do usuário e likes em posts dele (CASCADE pode já cobrir, mas fica explícito)
+        # Remoção explícita: FKs de post/seguir podem não ter ON DELETE CASCADE
+        # em bancos criados antes das migrations atuais.
         sub_posts = select(post.c.id).where(post.c.usuario_id == usuario_id)
         await db.execute(like.delete().where(like.c.post_id.in_(sub_posts)))
         await db.execute(like.delete().where(like.c.usuario_id == usuario_id))
@@ -196,9 +195,8 @@ async def autenticar_usuario(db: Database, email: str, senha: str):
     return {"access_token": token, "token_type": "bearer"}
 
 
-# ---------- helpers de saída ----------
 def _usuario_publico(row) -> dict:
-    """Normaliza saída do usuário (sem senha)."""
+    """Remove a senha e tolera rows antigas sem a coluna foto_url."""
     try:
         foto = row["foto_url"]
     except (KeyError, IndexError, TypeError):
@@ -211,7 +209,6 @@ def _usuario_publico(row) -> dict:
     }
 
 
-# ---------- atualizar perfil (/me PATCH) ----------
 async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) -> dict:
     valores = {}
     if data.nome is not None:
@@ -220,8 +217,8 @@ async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) 
         valores["email"] = str(data.email).strip().lower()
     if data.senha is not None:
         valores["senha"] = gerar_hash_senha(data.senha)
+    # model_fields_set distingue "omitido" de "enviado como null" (remover foto via PATCH).
     if "foto_url" in data.model_fields_set:
-        # permite null explícito ou URL externa
         valores["foto_url"] = data.foto_url
 
     if valores:
@@ -243,7 +240,9 @@ async def atualizar_usuario(db: Database, usuario_id: int, data: UsuarioUpdate) 
     return _usuario_publico(row)
 
 
-async def atualizar_foto_url(db: Database, usuario_id: int, foto_url: str | None) -> dict:
+async def atualizar_foto_url(
+    db: Database, usuario_id: int, foto_url: str | None
+) -> dict:
     await db.execute(
         usuario.update().where(usuario.c.id == usuario_id).values(foto_url=foto_url)
     )
@@ -253,17 +252,24 @@ async def atualizar_foto_url(db: Database, usuario_id: int, foto_url: str | None
     return _usuario_publico(row)
 
 
-# ---------- estatísticas do perfil ----------
 async def stats_usuario(db: Database, usuario_id: int) -> dict:
-    # Verifica existência do usuário
     urow = await db.fetch_one(select(usuario).where(usuario.c.id == usuario_id))
     if not urow:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    # Contadores agregados
-    posts_q = select(func.count()).select_from(post).where(post.c.usuario_id == usuario_id)
-    seguidores_q = select(func.count()).select_from(seguir).where(seguir.c.seguido_id == usuario_id)
-    seguindo_q = select(func.count()).select_from(seguir).where(seguir.c.seguidor_id == usuario_id)
+    posts_q = (
+        select(func.count()).select_from(post).where(post.c.usuario_id == usuario_id)
+    )
+    seguidores_q = (
+        select(func.count())
+        .select_from(seguir)
+        .where(seguir.c.seguido_id == usuario_id)
+    )
+    seguindo_q = (
+        select(func.count())
+        .select_from(seguir)
+        .where(seguir.c.seguidor_id == usuario_id)
+    )
 
     posts_count = await db.fetch_val(posts_q) or 0
     seguidores_count = await db.fetch_val(seguidores_q) or 0
@@ -280,24 +286,17 @@ async def stats_usuario(db: Database, usuario_id: int) -> dict:
 
 
 def _escape_like(term: str) -> str:
-    """Escapa % e _ para uso em ILIKE com escape='\\'."""
-    return (
-        term.replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-    )
+    """Evita que % e _ digitados pelo usuário virem curingas do ILIKE."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-# ---------- busca Explore ----------
 async def buscar_usuarios_com_posts(
     db: Database,
     q: str,
     limit: int = 20,
     posts_per_user: int = 5,
 ) -> list[dict]:
-    """
-    Busca usuários por nome (ILIKE %q%) e inclui os posts mais recentes de cada um.
-    """
+    """Busca por nome (ILIKE) e anexa os posts mais recentes de cada usuário encontrado."""
     from app.crud.post import get_posts_por_usuario
 
     termo = (q or "").strip()
