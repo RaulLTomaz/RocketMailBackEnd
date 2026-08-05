@@ -120,11 +120,14 @@ async def test_cloudinary_erro_vira_502_nao_crash(client: AsyncClient, monkeypat
     _, token = await cria_usuario_com_token(client)
     resp = await client.post(
         "/usuario/me/foto",
-        headers=auth_header(token),
+        headers={**auth_header(token), "Origin": "http://localhost:8081"},
         files={"file": ("avatar.png", BytesIO(PNG_1X1), "image/png")},
     )
     assert resp.status_code in (502, 503)
     detail = resp.json()["detail"]
     assert "Invalid" in detail or "Cloudinary" in detail or "RuntimeError" in detail
-    # resposta JSON válida = middleware CORS pôde anexar headers
-    assert "access-control-allow-origin" in {k.lower() for k in resp.headers.keys()}
+    # Com Origin no request, o CORSMiddleware anexa ACAO na resposta de erro
+    assert resp.headers.get("access-control-allow-origin") in (
+        "*",
+        "http://localhost:8081",
+    )
