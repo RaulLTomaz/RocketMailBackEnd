@@ -4,7 +4,7 @@ from databases import Database
 from starlette import status
 
 from app.database import get_database
-from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate
+from app.schemas.usuario import UsuarioCreate, UsuarioOut, UsuarioUpdate, UsuarioSearchHit
 from app.crud import usuario as crud_usuario
 from app.crud import post as post_crud
 from app.crud.usuario import autenticar_usuario, get_current_user
@@ -140,6 +140,35 @@ async def delete_me(
 ):
     await crud_usuario.deletar_usuario(db, usuario_id)
     return {"deleted": True}
+
+
+@router.get(
+    "/search",
+    response_model=list[UsuarioSearchHit],
+    summary="Buscar usuários",
+    description=(
+        "Busca usuários pelo nome (case-insensitive) e retorna os posts mais recentes "
+        "de cada um. Requer autenticação (mesmo padrão do feed)."
+    ),
+)
+async def search_usuarios(
+    q: str = Query(..., min_length=1, description="Texto de busca (nome)"),
+    limit: int = Query(20, ge=1, le=50, description="Máximo de usuários"),
+    posts_per_user: int = Query(
+        5, ge=0, le=20, description="Posts mais recentes por usuário"
+    ),
+    db: Database = Depends(get_database),
+    _usuario_id: int = Depends(get_current_user),
+):
+    termo = q.strip()
+    if not termo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parâmetro q é obrigatório.",
+        )
+    return await crud_usuario.buscar_usuarios_com_posts(
+        db, q=termo, limit=limit, posts_per_user=posts_per_user
+    )
 
 
 @router.get(

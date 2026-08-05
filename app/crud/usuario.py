@@ -277,3 +277,61 @@ async def stats_usuario(db: Database, usuario_id: int) -> dict:
             "seguindo": int(seguindo_count),
         },
     }
+
+
+def _escape_like(term: str) -> str:
+    """Escapa % e _ para uso em ILIKE com escape='\\'."""
+    return (
+        term.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+# ---------- busca Explore ----------
+async def buscar_usuarios_com_posts(
+    db: Database,
+    q: str,
+    limit: int = 20,
+    posts_per_user: int = 5,
+) -> list[dict]:
+    """
+    Busca usuários por nome (ILIKE %q%) e inclui os posts mais recentes de cada um.
+    """
+    from app.crud.post import get_posts_por_usuario
+
+    termo = (q or "").strip()
+    if not termo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parâmetro q é obrigatório.",
+        )
+
+    pattern = f"%{_escape_like(termo)}%"
+    query = (
+        select(
+            usuario.c.id,
+            usuario.c.nome,
+            usuario.c.email,
+            usuario.c.foto_url,
+        )
+        .where(usuario.c.nome.ilike(pattern, escape="\\"))
+        .order_by(asc(usuario.c.nome), asc(usuario.c.id))
+        .limit(limit)
+    )
+    rows = await db.fetch_all(query)
+    if not rows:
+        return []
+
+    hits: list[dict] = []
+    for row in rows:
+        posts = await get_posts_por_usuario(
+            db, row["id"], limit=posts_per_user, offset=0
+        )
+        hits.append(
+            {
+                "usuario": _usuario_publico(row),
+                "posts": posts,
+            }
+        )
+    return hits
