@@ -86,7 +86,17 @@ async def upload_foto_me(
     if not atual:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    foto_url = await salvar_foto_perfil(file, usuario_id)
+    try:
+        foto_url = await salvar_foto_perfil(file, usuario_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Garante resposta FastAPI (com CORS) em vez de derrubar o worker
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha ao processar upload: {type(e).__name__}: {e}",
+        ) from e
+
     try:
         antiga = atual["foto_url"]
     except (KeyError, IndexError, TypeError):

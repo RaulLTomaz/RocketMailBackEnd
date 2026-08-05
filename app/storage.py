@@ -1,6 +1,7 @@
 """Upload de fotos de perfil: Cloudinary em produção; disco local só em dev/test."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -22,6 +23,7 @@ ALLOWED_CONTENT_TYPES = {
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads/avatars")).resolve()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 MEDIA_URL_PREFIX = "/media/avatars"
+_CLOUDINARY_URL_RE = re.compile(r"^cloudinary://[^:\s]+:[^@\s]+@[^/\s]+")
 
 
 def _env_name() -> str:
@@ -32,29 +34,57 @@ def _is_production() -> bool:
     return _env_name() in ("production", "prod")
 
 
+def _normalize_secret(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().strip('"').strip("'")
+    return cleaned or None
+
+
+def cloudinary_url() -> str | None:
+    return _normalize_secret(os.getenv("CLOUDINARY_URL"))
+
+
 def cloudinary_enabled() -> bool:
+    url = cloudinary_url()
+    if url:
+        return True
     return bool(
-        os.getenv("CLOUDINARY_URL")
-        or (
-            os.getenv("CLOUDINARY_CLOUD_NAME")
-            and os.getenv("CLOUDINARY_API_KEY")
-            and os.getenv("CLOUDINARY_API_SECRET")
-        )
+        _normalize_secret(os.getenv("CLOUDINARY_CLOUD_NAME"))
+        and _normalize_secret(os.getenv("CLOUDINARY_API_KEY"))
+        and _normalize_secret(os.getenv("CLOUDINARY_API_SECRET"))
     )
+
+
+def cloudinary_config_error() -> str | None:
+    """Retorna mensagem se a config existir mas estiver inválida; None se ok/ausente."""
+    url = cloudinary_url()
+    if url and not _CLOUDINARY_URL_RE.match(url):
+        return (
+            "CLOUDINARY_URL inválida. Use o formato "
+            "cloudinary://API_KEY:API_SECRET@CLOUD_NAME (sem aspas extras)."
+        )
+    return None
 
 
 def _configure_cloudinary() -> None:
     import cloudinary
 
-    if os.getenv("CLOUDINARY_URL"):
-        cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"), secure=True)
-    else:
-        cloudinary.config(
-            cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-            api_key=os.getenv("CLOUDINARY_API_KEY"),
-            api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-            secure=True,
-        )
+    err = cloudinary_config_error()
+    if err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=err)
+
+    url = cloudinary_url()
+    if url:
+        cloudinary.config(cloudinary_url=url, secure=True)
+        return
+
+    cloudinary.config(
+        cloud_name=_normalize_secret(os.getenv("CLOUDINARY_CLOUD_NAME")),
+        api_key=_normalize_secret(os.getenv("CLOUDINARY_API_KEY")),
+        api_secret=_normalize_secret(os.getenv("CLOUDINARY_API_SECRET")),
+        secure=True,
+    )
 
 
 def _ensure_https(url: str) -> str:
@@ -117,35 +147,79 @@ def _public_url_for_local(filename: str) -> str:
     return path
 
 
-def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
+def _map_cloudinary_error(exc: Exception) -> HTTPException:
+    msg = str(exc) or type(exc).__name__
+    lower = msg.lower()
+    if any(x in lower for x in ("invalid", "unauthorized", "api key", "authentication", "401")):
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Credenciais Cloudinary inválidas: {type(exc).__name__}: {msg}",
+        )
+    if any(x in lower for x in ("timeout", "timed out", "connection", "network", "resolve")):
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Timeout/rede ao falar com Cloudinary: {type(exc).__name__}: {msg}",
+        )
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"Falha no upload Cloudinary: {type(exc).__name__}: {msg}",
+    )
+
+
+def _upload_cloudinary_sync(data: bytes, content_type: str, usuario_id: int) -> str:
     try:
         import cloudinary.uploader
     except ImportError as e:
         raise HTTPException(
             status_code=500,
-            detail="Cloudinary não instalado no servidor.",
+            detail="Pacote cloudinary não instalado no servidor. Verifique requirements.txt.",
         ) from e
 
     _configure_cloudinary()
 
-    result = cloudinary.uploader.upload(
-        data,
-        folder="rocketmail/avatars",
-        public_id=f"user_{usuario_id}",
-        overwrite=True,
-        resource_type="image",
-        format=ALLOWED_CONTENT_TYPES[content_type].lstrip("."),
-    )
+    try:
+        result = cloudinary.uploader.upload(
+            data,
+            folder="rocketmail/avatars",
+            public_id=f"user_{usuario_id}",
+            overwrite=True,
+            resource_type="image",
+            format=ALLOWED_CONTENT_TYPES[content_type].lstrip("."),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("cloudinary.uploader.upload falhou (user_%s)", usuario_id)
+        raise _map_cloudinary_error(e) from e
+
     url = result.get("secure_url") or result.get("url")
     if not url:
-        raise HTTPException(status_code=500, detail="Falha ao obter URL do Cloudinary.")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Cloudinary não retornou secure_url.",
+        )
     url = _ensure_https(str(url))
     if not url.startswith("https://"):
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Cloudinary não retornou URL HTTPS (secure_url).",
         )
+    if "res.cloudinary.com" not in url and "cloudinary.com" not in url:
+        logger.warning("URL Cloudinary inesperada: %s", url)
     return url
+
+
+async def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
+    # SDK síncrono — não bloquear o event loop (evita timeout/worker morto sem CORS)
+    try:
+        return await asyncio.to_thread(
+            _upload_cloudinary_sync, data, content_type, usuario_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Falha inesperada no upload Cloudinary (user_%s)", usuario_id)
+        raise _map_cloudinary_error(e) from e
 
 
 def _upload_local(data: bytes, ext: str, usuario_id: int) -> str:
@@ -168,8 +242,15 @@ async def salvar_foto_perfil(file: UploadFile, usuario_id: int) -> str:
     """
     data, content_type, ext = await _read_validated(file)
 
-    if cloudinary_enabled():
-        return _upload_cloudinary(data, content_type, usuario_id)
+    cfg_err = cloudinary_config_error()
+    if cfg_err and _is_production():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=cfg_err,
+        )
+
+    if cloudinary_enabled() and not cfg_err:
+        return await _upload_cloudinary(data, content_type, usuario_id)
 
     if _is_production():
         logger.error(
@@ -180,7 +261,7 @@ async def salvar_foto_perfil(file: UploadFile, usuario_id: int) -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Upload de foto indisponível: configure CLOUDINARY_URL no Render. "
-                "O disco local é efêmero e as fotos somem após redeploy."
+                "Formato: cloudinary://API_KEY:API_SECRET@CLOUD_NAME"
             ),
         )
 
@@ -201,7 +282,7 @@ def remover_arquivo_local_se_houver(foto_url: str | None) -> None:
 
 
 def remover_foto_cloudinary_se_houver(usuario_id: int) -> None:
-    if not cloudinary_enabled():
+    if not cloudinary_enabled() or cloudinary_config_error():
         return
     try:
         import cloudinary.uploader

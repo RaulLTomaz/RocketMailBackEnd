@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app.database import database, engine, metadata
 from app import models  # noqa: F401 — registra tabelas no metadata
 from app.routers import usuario, post, seguir, like
-from app.storage import cloudinary_enabled
+from app.storage import cloudinary_enabled, cloudinary_config_error, cloudinary_url
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -84,7 +84,17 @@ async def lifespan(app: FastAPI):
             raise
 
     if cloudinary_enabled():
-        logger.info("✅ Cloudinary configurado — uploads de foto usam storage durável")
+        cfg_err = cloudinary_config_error()
+        if cfg_err:
+            logger.error("⚠️ %s", cfg_err)
+        else:
+            # não loga o secret — só confirma presença/formato
+            url = cloudinary_url()
+            hint = url.split("@")[-1] if url and "@" in url else "vars CLOUDINARY_*"
+            logger.info(
+                "✅ Cloudinary configurado (%s) — uploads de foto usam storage durável",
+                hint,
+            )
     else:
         env = os.getenv("PYTHON_ENV", "dev").lower()
         if env in ("production", "prod"):

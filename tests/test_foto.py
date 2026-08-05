@@ -104,3 +104,27 @@ async def test_producao_sem_cloudinary_retorna_503(client: AsyncClient, monkeypa
     assert resp.status_code == 503
     assert "CLOUDINARY" in resp.json()["detail"].upper()
     assert storage.cloudinary_enabled() is False
+
+
+async def test_cloudinary_erro_vira_502_nao_crash(client: AsyncClient, monkeypatch):
+    """Exceção do SDK vira HTTPException (resposta FastAPI com CORS), não derruba a request."""
+    import app.storage as storage
+
+    monkeypatch.setenv("CLOUDINARY_URL", "cloudinary://key:secret@demo")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("Invalid API Key")
+
+    monkeypatch.setattr(storage, "_upload_cloudinary_sync", boom)
+
+    _, token = await cria_usuario_com_token(client)
+    resp = await client.post(
+        "/usuario/me/foto",
+        headers=auth_header(token),
+        files={"file": ("avatar.png", BytesIO(PNG_1X1), "image/png")},
+    )
+    assert resp.status_code in (502, 503)
+    detail = resp.json()["detail"]
+    assert "Invalid" in detail or "Cloudinary" in detail or "RuntimeError" in detail
+    # resposta JSON válida = middleware CORS pôde anexar headers
+    assert "access-control-allow-origin" in {k.lower() for k in resp.headers.keys()}
