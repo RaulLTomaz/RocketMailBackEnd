@@ -15,6 +15,11 @@ services:
         value: "1"
       - key: PUBLIC_BASE_URL
         value: https://rocketmail-api.onrender.com
+      # Obrigatório para fotos persistirem (disco do Render é efêmero).
+      # No dashboard do Render: Environment → CLOUDINARY_URL =
+      # cloudinary://<API_KEY>:<API_SECRET>@<CLOUD_NAME>
+      - key: CLOUDINARY_URL
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL

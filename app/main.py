@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.database import database, engine, metadata
 from app import models  # noqa: F401 — registra tabelas no metadata
 from app.routers import usuario, post, seguir, like
+from app.storage import cloudinary_enabled
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -27,6 +28,31 @@ def _ensure_schema():
         conn.execute(
             text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT")
         )
+
+
+async def _limpar_foto_urls_efemeras():
+    """
+    Zera foto_url que apontam para /media/avatars (arquivos somem no redeploy do Render).
+    Cloudinary HTTPS permanece intacto.
+    """
+    count = await database.fetch_val(
+        text(
+            "SELECT COUNT(*) FROM usuario "
+            "WHERE foto_url IS NOT NULL AND foto_url LIKE '%/media/avatars/%'"
+        )
+    )
+    if not count:
+        return
+    await database.execute(
+        text(
+            "UPDATE usuario SET foto_url = NULL "
+            "WHERE foto_url IS NOT NULL AND foto_url LIKE '%/media/avatars/%'"
+        )
+    )
+    logger.warning(
+        "Limpou %s foto_url efêmera(s) apontando para /media/avatars/",
+        int(count),
+    )
 
 
 @asynccontextmanager
@@ -57,6 +83,23 @@ async def lifespan(app: FastAPI):
             logger.exception("Falha ao garantir schema")
             raise
 
+    if cloudinary_enabled():
+        logger.info("✅ Cloudinary configurado — uploads de foto usam storage durável")
+    else:
+        env = os.getenv("PYTHON_ENV", "dev").lower()
+        if env in ("production", "prod"):
+            logger.error(
+                "⚠️ CLOUDINARY_URL ausente em produção. "
+                "POST /usuario/me/foto retornará 503 até configurar Cloudinary no Render."
+            )
+        else:
+            logger.warning("Cloudinary não configurado — usando disco local (dev/test)")
+
+    try:
+        await _limpar_foto_urls_efemeras()
+    except Exception:
+        logger.exception("Falha ao limpar foto_url efêmeras")
+
     yield
 
     await database.disconnect()
@@ -76,7 +119,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# arquivos locais de avatar em /media/avatars/...
+# arquivos locais de avatar em /media/avatars/... (apenas dev/test)
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
 (UPLOADS_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(UPLOADS_ROOT)), name="media")

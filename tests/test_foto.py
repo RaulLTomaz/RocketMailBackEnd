@@ -84,3 +84,23 @@ async def test_patch_foto_url_externa(client: AsyncClient):
     )
     assert resp.status_code == 200
     assert resp.json()["foto_url"] == url
+
+
+async def test_producao_sem_cloudinary_retorna_503(client: AsyncClient, monkeypatch):
+    import app.storage as storage
+
+    monkeypatch.setenv("PYTHON_ENV", "production")
+    monkeypatch.delenv("CLOUDINARY_URL", raising=False)
+    monkeypatch.delenv("CLOUDINARY_CLOUD_NAME", raising=False)
+    monkeypatch.delenv("CLOUDINARY_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDINARY_API_SECRET", raising=False)
+
+    _, token = await cria_usuario_com_token(client)
+    resp = await client.post(
+        "/usuario/me/foto",
+        headers=auth_header(token),
+        files={"file": ("avatar.png", BytesIO(PNG_1X1), "image/png")},
+    )
+    assert resp.status_code == 503
+    assert "CLOUDINARY" in resp.json()["detail"].upper()
+    assert storage.cloudinary_enabled() is False

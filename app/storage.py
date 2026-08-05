@@ -1,12 +1,15 @@
-"""Upload de fotos de perfil: Cloudinary (se configurado) ou disco local + /media."""
+"""Upload de fotos de perfil: Cloudinary em produção; disco local só em dev/test."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
+
+logger = logging.getLogger("uvicorn.error")
 
 MAX_BYTES = int(os.getenv("FOTO_MAX_BYTES", str(5 * 1024 * 1024)))  # 5 MB
 ALLOWED_CONTENT_TYPES = {
@@ -21,7 +24,15 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 MEDIA_URL_PREFIX = "/media/avatars"
 
 
-def _cloudinary_enabled() -> bool:
+def _env_name() -> str:
+    return os.getenv("PYTHON_ENV", "dev").lower()
+
+
+def _is_production() -> bool:
+    return _env_name() in ("production", "prod")
+
+
+def cloudinary_enabled() -> bool:
     return bool(
         os.getenv("CLOUDINARY_URL")
         or (
@@ -30,6 +41,26 @@ def _cloudinary_enabled() -> bool:
             and os.getenv("CLOUDINARY_API_SECRET")
         )
     )
+
+
+def _configure_cloudinary() -> None:
+    import cloudinary
+
+    if os.getenv("CLOUDINARY_URL"):
+        cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"), secure=True)
+    else:
+        cloudinary.config(
+            cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+            api_key=os.getenv("CLOUDINARY_API_KEY"),
+            api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+            secure=True,
+        )
+
+
+def _ensure_https(url: str) -> str:
+    if url.startswith("http://"):
+        return "https://" + url[len("http://") :]
+    return url
 
 
 def _sniff_image(data: bytes) -> str | None:
@@ -72,7 +103,6 @@ async def _read_validated(file: UploadFile) -> tuple[bytes, str, str]:
             detail="Tipo de arquivo não suportado. Use JPEG, PNG ou WebP.",
         )
 
-    # se o cliente mentiu o MIME mas o sniff passou, confia no sniff
     if sniffed:
         content_type = sniffed
 
@@ -84,13 +114,11 @@ def _public_url_for_local(filename: str) -> str:
     path = f"{MEDIA_URL_PREFIX}/{filename}"
     if PUBLIC_BASE_URL:
         return f"{PUBLIC_BASE_URL}{path}"
-    # fallback relativo — front em outro host precisa de PUBLIC_BASE_URL
     return path
 
 
 def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
     try:
-        import cloudinary
         import cloudinary.uploader
     except ImportError as e:
         raise HTTPException(
@@ -98,15 +126,7 @@ def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
             detail="Cloudinary não instalado no servidor.",
         ) from e
 
-    if os.getenv("CLOUDINARY_URL"):
-        cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"), secure=True)
-    else:
-        cloudinary.config(
-            cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-            api_key=os.getenv("CLOUDINARY_API_KEY"),
-            api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-            secure=True,
-        )
+    _configure_cloudinary()
 
     result = cloudinary.uploader.upload(
         data,
@@ -119,12 +139,17 @@ def _upload_cloudinary(data: bytes, content_type: str, usuario_id: int) -> str:
     url = result.get("secure_url") or result.get("url")
     if not url:
         raise HTTPException(status_code=500, detail="Falha ao obter URL do Cloudinary.")
+    url = _ensure_https(str(url))
+    if not url.startswith("https://"):
+        raise HTTPException(
+            status_code=500,
+            detail="Cloudinary não retornou URL HTTPS (secure_url).",
+        )
     return url
 
 
 def _upload_local(data: bytes, ext: str, usuario_id: int) -> str:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    # remove extensões antigas do mesmo usuário
     for old in UPLOAD_DIR.glob(f"user_{usuario_id}.*"):
         try:
             old.unlink(missing_ok=True)
@@ -137,16 +162,34 @@ def _upload_local(data: bytes, ext: str, usuario_id: int) -> str:
 
 
 async def salvar_foto_perfil(file: UploadFile, usuario_id: int) -> str:
+    """
+    Em produção (Render) exige Cloudinary — disco local é efêmero.
+    Em dev/test permite fallback local em /media/avatars.
+    """
     data, content_type, ext = await _read_validated(file)
-    if _cloudinary_enabled():
+
+    if cloudinary_enabled():
         return _upload_cloudinary(data, content_type, usuario_id)
+
+    if _is_production():
+        logger.error(
+            "Upload de foto recusado: Cloudinary não configurado em produção. "
+            "Defina CLOUDINARY_URL (ou CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET) no Render."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Upload de foto indisponível: configure CLOUDINARY_URL no Render. "
+                "O disco local é efêmero e as fotos somem após redeploy."
+            ),
+        )
+
     return _upload_local(data, ext, usuario_id)
 
 
 def remover_arquivo_local_se_houver(foto_url: str | None) -> None:
     if not foto_url:
         return
-    # só apaga se for arquivo nosso sob /media/avatars/
     m = re.search(r"/media/avatars/([^/?#]+)$", foto_url)
     if not m:
         return
@@ -158,24 +201,22 @@ def remover_arquivo_local_se_houver(foto_url: str | None) -> None:
 
 
 def remover_foto_cloudinary_se_houver(usuario_id: int) -> None:
-    if not _cloudinary_enabled():
+    if not cloudinary_enabled():
         return
     try:
-        import cloudinary
         import cloudinary.uploader
 
-        if os.getenv("CLOUDINARY_URL"):
-            cloudinary.config(cloudinary_url=os.getenv("CLOUDINARY_URL"), secure=True)
-        else:
-            cloudinary.config(
-                cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-                api_key=os.getenv("CLOUDINARY_API_KEY"),
-                api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-                secure=True,
-            )
+        _configure_cloudinary()
         cloudinary.uploader.destroy(
             f"rocketmail/avatars/user_{usuario_id}",
             resource_type="image",
         )
     except Exception:
-        pass
+        logger.exception("Falha ao remover foto no Cloudinary (user_%s)", usuario_id)
+
+
+def is_ephemeral_media_url(foto_url: str | None) -> bool:
+    """True se a URL aponta para storage local /media/avatars (efêmero no Render)."""
+    if not foto_url:
+        return False
+    return "/media/avatars/" in foto_url
