@@ -31,7 +31,8 @@ RUN_MIGRATIONS = os.getenv("RUN_MIGRATIONS", "0") == "1"
 UPLOADS_ROOT = Path(os.getenv("UPLOAD_DIR", "uploads/avatars")).resolve().parent
 DB_CONNECT_MAX_ATTEMPTS = 5
 
-_LOCAL_DEV_ORIGINS = (
+_DEFAULT_PROD_ORIGINS = (
+    "https://rocket-mail-site.vercel.app",
     "http://localhost:8081",
     "http://localhost:3000",
     "http://127.0.0.1:8081",

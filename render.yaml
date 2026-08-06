@@ -16,9 +16,8 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://rocketmail-api.onrender.com
       # Frontend na Vercel (produção + previews *.vercel.app via regex no código).
-      # Se tiver domínio customizado, acrescente aqui separado por vírgula.
       - key: ALLOWED_ORIGINS
-        value: "http://localhost:8081,http://localhost:3000"
+        value: "https://rocket-mail-site.vercel.app,http://localhost:8081,http://localhost:3000"
       - key: ALLOWED_ORIGIN_REGEX
         value: "https://([\\w-]+\\.)*vercel\\.app"
       # Obrigatório para fotos persistirem (disco do Render é efêmero).
