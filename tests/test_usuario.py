@@ -66,6 +66,13 @@ async def test_login_sucesso(client: AsyncClient):
     assert resp.json()["id"] == user["id"]
 
 
+async def test_login_email_case_insensitive(client: AsyncClient):
+    email = email_unico("CaseLogin")
+    await cria_usuario(client, email=email.lower(), senha="senha123")
+    token = await login(client, email.upper(), "senha123")
+    assert isinstance(token, str) and len(token) > 10
+
+
 async def test_login_credenciais_invalidas(client: AsyncClient):
     user = await cria_usuario(client, email=email_unico("badlogin"))
     resp = await client.post(

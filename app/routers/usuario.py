@@ -5,14 +5,15 @@ from starlette import status
 
 from app.crud import post as post_crud
 from app.crud import usuario as crud_usuario
-from app.crud.usuario import autenticar_usuario, get_current_user
 from app.database import get_database
+from app.schemas.post import PostResponse
 from app.schemas.usuario import (
     UsuarioCreate,
     UsuarioOut,
     UsuarioSearchHit,
     UsuarioUpdate,
 )
+from app.security import get_current_user
 from app.storage import (
     remover_arquivo_local_se_houver,
     remover_foto_cloudinary_se_houver,
@@ -31,7 +32,7 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Database = Depends(get_database),
 ):
-    return await autenticar_usuario(db, form_data.username, form_data.password)
+    return await crud_usuario.autenticar_usuario(db, form_data.username, form_data.password)
 
 
 @router.post(
@@ -94,17 +95,14 @@ async def upload_foto_me(
         foto_url = await salvar_foto_perfil(file, usuario_id)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         # Converte crash não tratado em resposta HTTP para o CORSMiddleware anexar ACAO.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Falha ao processar upload: {type(e).__name__}: {e}",
-        ) from e
+            detail="Falha ao processar upload da foto.",
+        )
 
-    try:
-        antiga = atual["foto_url"]
-    except (KeyError, IndexError, TypeError):
-        antiga = None
+    antiga = atual.get("foto_url")
     if antiga and antiga != foto_url:
         remover_arquivo_local_se_houver(antiga)
 
@@ -124,10 +122,7 @@ async def delete_foto_me(
     if not atual:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    try:
-        antiga = atual["foto_url"]
-    except (KeyError, IndexError, TypeError):
-        antiga = None
+    antiga = atual.get("foto_url")
     remover_arquivo_local_se_houver(antiga)
     remover_foto_cloudinary_se_houver(usuario_id)
     return await crud_usuario.atualizar_foto_url(db, usuario_id, None)
@@ -165,14 +160,8 @@ async def search_usuarios(
     db: Database = Depends(get_database),
     _usuario_id: int = Depends(get_current_user),
 ):
-    termo = q.strip()
-    if not termo:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Parâmetro q é obrigatório.",
-        )
     return await crud_usuario.buscar_usuarios_com_posts(
-        db, q=termo, limit=limit, posts_per_user=posts_per_user
+        db, q=q.strip(), limit=limit, posts_per_user=posts_per_user
     )
 
 
@@ -200,6 +189,7 @@ async def stats(usuario_id: int, db: Database = Depends(get_database)):
 
 @router.get(
     "/{usuario_id}/posts",
+    response_model=list[PostResponse],
     summary="Posts do usuário (timeline pública)",
     description="Lista os posts de um usuário específico, com paginação.",
 )

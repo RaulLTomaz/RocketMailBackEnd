@@ -16,5 +16,6 @@ seguir = Table(
         Integer,
         ForeignKey("usuario.id", ondelete="CASCADE"),
         primary_key=True,
+        index=True,
     ),
 )

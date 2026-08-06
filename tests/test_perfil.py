@@ -12,9 +12,9 @@ async def test_stats_usuario_contadores(client: AsyncClient):
     b, _ = await cria_usuario_com_token(client, nome="BobStats")
     c, token_c = await cria_usuario_com_token(client, nome="CarolStats")
 
-    assert (await cria_post(client, token_a, "post 1 da Alice")).status_code == 200
+    await cria_post(client, token_a, "post 1 da Alice")
     await asyncio.sleep(0.01)
-    assert (await cria_post(client, token_a, "post 2 da Alice")).status_code == 200
+    await cria_post(client, token_a, "post 2 da Alice")
 
     assert (await seguir(client, token_a, b["id"])).status_code == 200
     assert (await seguir(client, token_c, a["id"])).status_code == 200
@@ -37,12 +37,12 @@ async def test_timeline_usuario_paginada(client: AsyncClient):
     a, token_a = await cria_usuario_com_token(client, nome="AliceTL")
     b, token_b = await cria_usuario_com_token(client, nome="BobTL")
 
-    assert (await cria_post(client, token_a, "A_post_1")).status_code == 200
+    await cria_post(client, token_a, "A_post_1")
     await asyncio.sleep(0.01)
-    assert (await cria_post(client, token_a, "A_post_2")).status_code == 200
+    await cria_post(client, token_a, "A_post_2")
     await asyncio.sleep(0.01)
-    assert (await cria_post(client, token_a, "A_post_3")).status_code == 200
-    assert (await cria_post(client, token_b, "B_post_1")).status_code == 200
+    await cria_post(client, token_a, "A_post_3")
+    await cria_post(client, token_b, "B_post_1")
 
     resp_all = await client.get(f"/usuario/{a['id']}/posts")
     assert resp_all.status_code == 200

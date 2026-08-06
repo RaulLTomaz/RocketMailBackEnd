@@ -1,16 +1,19 @@
 from databases import Database
 from fastapi import APIRouter, Depends, Query
+from starlette import status
 
 from app.crud import post as post_crud
-from app.crud.usuario import get_current_user
 from app.database import get_database
-from app.schemas.post import PostCreate
+from app.schemas.post import PostCreate, PostResponse
+from app.security import get_current_user
 
 router = APIRouter(prefix="/post", tags=["Post"])
 
 
 @router.post(
     "/",
+    response_model=PostResponse,
+    status_code=status.HTTP_201_CREATED,
     summary="Criar post",
     description="Cria um post para o usuário autenticado.",
 )
@@ -24,6 +27,7 @@ async def create_post(
 
 @router.get(
     "/",
+    response_model=list[PostResponse],
     summary="Listar posts",
     description=(
         "Lista posts com paginação e ordenação por data "
@@ -42,6 +46,7 @@ async def read_posts(
 
 @router.get(
     "/feed",
+    response_model=list[PostResponse],
     summary="Feed priorizado",
     description=(
         "Prioriza posts de quem o usuário autenticado segue; "

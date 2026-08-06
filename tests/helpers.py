@@ -54,11 +54,13 @@ async def cria_usuario_com_token(
 
 
 async def cria_post(client: AsyncClient, token: str, conteudo: str):
-    return await client.post(
+    resp = await client.post(
         "/post/",
         json={"post": conteudo},
         headers=auth_header(token),
     )
+    assert resp.status_code == 201, resp.text
+    return resp
 
 
 async def seguir(client: AsyncClient, seguidor_token: str, seguido_id: int):

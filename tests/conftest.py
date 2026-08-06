@@ -20,7 +20,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app import models  # noqa: F401
-from app.database import database, engine, metadata
+from app.database import database, ensure_schema
 from app.main import app
 
 if platform.system() == "Windows":
@@ -29,12 +29,10 @@ if platform.system() == "Windows":
 
 @pytest.fixture(scope="session", autouse=True)
 def preparar_banco():
-    from sqlalchemy import text
-
-    metadata.create_all(bind=engine)
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT"))
+    ensure_schema()
     yield
+    from app.database import engine, metadata
+
     metadata.drop_all(bind=engine)
 
 

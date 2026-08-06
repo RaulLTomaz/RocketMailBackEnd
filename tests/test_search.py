@@ -36,9 +36,9 @@ async def test_search_parcial_case_insensitive_com_posts(client: AsyncClient):
     b, token_b = await cria_usuario_com_token(client, nome="carla silva")
     await cria_usuario_com_token(client, nome="Bruno Costa")
 
-    assert (await cria_post(client, token_a, "post antigo ana")).status_code == 200
-    assert (await cria_post(client, token_a, "post novo ana")).status_code == 200
-    assert (await cria_post(client, token_b, "post da carla")).status_code == 200
+    await cria_post(client, token_a, "post antigo ana")
+    await cria_post(client, token_a, "post novo ana")
+    await cria_post(client, token_b, "post da carla")
 
     resp = await client.get(
         "/usuario/search",
@@ -70,7 +70,7 @@ async def test_search_parcial_case_insensitive_com_posts(client: AsyncClient):
 async def test_search_limita_posts_por_usuario(client: AsyncClient):
     user, token = await cria_usuario_com_token(client, nome="Posts Limit User")
     for i in range(6):
-        assert (await cria_post(client, token, f"p{i}")).status_code == 200
+        await cria_post(client, token, f"p{i}")
 
     resp = await client.get(
         "/usuario/search",

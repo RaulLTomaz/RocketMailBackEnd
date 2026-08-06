@@ -12,7 +12,11 @@ like = Table(
         nullable=False,
     ),
     Column(
-        "post_id", Integer, ForeignKey("post.id", ondelete="CASCADE"), nullable=False
+        "post_id",
+        Integer,
+        ForeignKey("post.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     ),
     PrimaryKeyConstraint("usuario_id", "post_id", name="like_pkey"),
 )

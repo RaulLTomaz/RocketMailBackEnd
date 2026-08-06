@@ -2,9 +2,9 @@ from databases import Database
 from fastapi import APIRouter, Depends, Query
 
 from app.crud import seguir as seguir_crud
-from app.crud.usuario import get_current_user
 from app.database import get_database
 from app.schemas.usuario import UsuarioOut
+from app.security import get_current_user
 
 router = APIRouter(prefix="/seguir", tags=["Seguir"])
 

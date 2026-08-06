@@ -4,10 +4,12 @@ from databases import Database
 from fastapi import APIRouter, Depends, Query
 
 from app.crud import like as like_crud
-from app.crud.usuario import get_current_user
 from app.database import get_database
+from app.security import get_current_user
 
 router = APIRouter(prefix="/like", tags=["Like"])
+
+LIKE_BATCH_MAX = 100
 
 
 @router.get(
@@ -19,7 +21,12 @@ router = APIRouter(prefix="/like", tags=["Like"])
     ),
 )
 async def get_like_summary_batch(
-    post_ids: List[int] = Query(..., description="IDs de post (repetir o param)"),
+    post_ids: List[int] = Query(
+        ...,
+        min_length=1,
+        max_length=LIKE_BATCH_MAX,
+        description="IDs de post (repetir o param)",
+    ),
     db: Database = Depends(get_database),
     usuario_id: int = Depends(get_current_user),
 ) -> Dict[int, dict]:

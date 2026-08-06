@@ -10,7 +10,7 @@ async def test_like_flows(client: AsyncClient):
     _, token_b = await cria_usuario_com_token(client, nome="BobLike")
 
     resp_post = await cria_post(client, token_a, "post curtível")
-    assert resp_post.status_code == 200
+    assert resp_post.status_code == 201
     post_id = resp_post.json()["id"]
 
     r = await client.get(f"/like/{post_id}", headers=auth_header(token_a))

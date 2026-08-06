@@ -41,7 +41,7 @@ async def test_upload_foto_e_aparece_em_me_e_posts(client: AsyncClient):
     assert me.json()["foto_url"] == body["foto_url"]
 
     post_resp = await cria_post(client, token, "post com avatar")
-    assert post_resp.status_code == 200
+    assert post_resp.status_code == 201
     assert post_resp.json()["usuario"]["foto_url"] == body["foto_url"]
 
     feed = await client.get("/post/feed", headers=auth_header(token))
@@ -126,7 +126,7 @@ async def test_cloudinary_erro_vira_502_nao_crash(client: AsyncClient, monkeypat
     )
     assert resp.status_code in (502, 503)
     detail = resp.json()["detail"]
-    assert "Invalid" in detail or "Cloudinary" in detail or "RuntimeError" in detail
+    assert "Cloudinary" in detail or "upload" in detail.lower()
     # Sem Origin o ASGI test não recebe ACAO; com Origin o middleware anexa o header.
     assert resp.headers.get("access-control-allow-origin") in (
         "*",

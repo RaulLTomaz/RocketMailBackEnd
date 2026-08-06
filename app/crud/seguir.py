@@ -1,9 +1,17 @@
 from databases import Database
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.seguir import seguir
 from app.models.usuario import usuario
+
+_USUARIO_PUBLICO_COLS = (
+    usuario.c.id,
+    usuario.c.nome,
+    usuario.c.email,
+    usuario.c.foto_url,
+)
 
 
 async def seguir_usuario(db: Database, seguidor_id: int, seguido_id: int):
@@ -13,7 +21,9 @@ async def seguir_usuario(db: Database, seguidor_id: int, seguido_id: int):
             detail="Não é possível seguir a si mesmo.",
         )
 
-    seguido = await db.fetch_one(usuario.select().where(usuario.c.id == seguido_id))
+    seguido = await db.fetch_one(
+        select(usuario.c.id).where(usuario.c.id == seguido_id)
+    )
     if not seguido:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -28,12 +38,14 @@ async def seguir_usuario(db: Database, seguidor_id: int, seguido_id: int):
 
 
 async def listar_seguidos(db: Database, seguidor_id: int):
-    query = usuario.select().where(
-        usuario.c.id.in_(
-            seguir.select()
-            .with_only_columns(seguir.c.seguido_id)
-            .where(seguir.c.seguidor_id == seguidor_id)
+    query = (
+        select(*_USUARIO_PUBLICO_COLS)
+        .where(
+            usuario.c.id.in_(
+                select(seguir.c.seguido_id).where(seguir.c.seguidor_id == seguidor_id)
+            )
         )
+        .order_by(usuario.c.nome, usuario.c.id)
     )
     return await db.fetch_all(query)
 

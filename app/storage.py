@@ -118,16 +118,26 @@ async def _read_validated(file: UploadFile) -> tuple[bytes, str, str]:
             detail="Arquivo inválido: nome ausente.",
         )
 
-    data = await file.read()
+    # Lê em chunks para abortar cedo se o client enviar mais que o limite.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Arquivo muito grande (máx {MAX_BYTES // (1024 * 1024)} MB).",
+            )
+        chunks.append(chunk)
+
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Arquivo vazio.",
-        )
-    if len(data) > MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Arquivo muito grande (máx {MAX_BYTES // (1024 * 1024)} MB).",
         )
 
     sniffed = _sniff_image(data)
@@ -155,6 +165,7 @@ def _public_url_for_local(filename: str) -> str:
 
 
 def _map_cloudinary_error(exc: Exception) -> HTTPException:
+    # Detalhe interno só no log; cliente recebe mensagem estável (sem vazar config).
     msg = str(exc) or type(exc).__name__
     lower = msg.lower()
     if any(
@@ -163,18 +174,18 @@ def _map_cloudinary_error(exc: Exception) -> HTTPException:
     ):
         return HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Credenciais Cloudinary inválidas: {type(exc).__name__}: {msg}",
+            detail="Credenciais Cloudinary inválidas. Verifique CLOUDINARY_URL no servidor.",
         )
     if any(
         x in lower for x in ("timeout", "timed out", "connection", "network", "resolve")
     ):
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Timeout/rede ao falar com Cloudinary: {type(exc).__name__}: {msg}",
+            detail="Timeout ou falha de rede ao falar com o Cloudinary.",
         )
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail=f"Falha no upload Cloudinary: {type(exc).__name__}: {msg}",
+        detail="Falha no upload para o Cloudinary.",
     )
 
 
@@ -183,7 +194,7 @@ def _upload_cloudinary_sync(data: bytes, content_type: str, usuario_id: int) -> 
         import cloudinary.uploader
     except ImportError as e:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Pacote cloudinary não instalado no servidor. Verifique requirements.txt.",
         ) from e
 
@@ -304,9 +315,3 @@ def remover_foto_cloudinary_se_houver(usuario_id: int) -> None:
     except Exception:
         logger.exception("Falha ao remover foto no Cloudinary (user_%s)", usuario_id)
 
-
-def is_ephemeral_media_url(foto_url: str | None) -> bool:
-    """Identifica URLs locais que somem após redeploy no Render."""
-    if not foto_url:
-        return False
-    return "/media/avatars/" in foto_url

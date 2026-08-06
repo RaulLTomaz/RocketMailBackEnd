@@ -10,8 +10,7 @@ import ssl
 
 from databases import Database
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import MetaData, create_engine, text
 
 ENV = os.getenv("PYTHON_ENV", "dev").lower()
 
@@ -35,7 +34,6 @@ DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "", 1)
 
 metadata = MetaData()
-Base = declarative_base()
 
 use_ssl = ENV in ("production", "prod") or os.getenv("DATABASE_SSL", "0") == "1"
 ssl_verify = os.getenv("DATABASE_SSL_VERIFY", "0") == "1"
@@ -62,6 +60,26 @@ if use_ssl:
     database = Database(DATABASE_URL, ssl=_build_ssl_context())
 else:
     database = Database(DATABASE_URL)
+
+
+_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS ix_post_usuario_id ON post (usuario_id)",
+    "CREATE INDEX IF NOT EXISTS ix_post_data_criacao ON post (data_criacao DESC)",
+    'CREATE INDEX IF NOT EXISTS ix_like_post_id ON "like" (post_id)',
+    "CREATE INDEX IF NOT EXISTS ix_seguir_seguido_id ON seguir (seguido_id)",
+)
+
+
+def ensure_schema() -> None:
+    """
+    create_all não altera tabelas existentes; o ALTER cobre colunas novas
+    (ex.: foto_url) e índices secundários em bancos já em produção.
+    """
+    metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_url TEXT"))
+        for stmt in _INDEX_STATEMENTS:
+            conn.execute(text(stmt))
 
 
 def get_database() -> Database:

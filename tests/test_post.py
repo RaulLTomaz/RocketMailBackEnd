@@ -15,7 +15,7 @@ from tests.helpers import (
 async def test_criar_post(client: AsyncClient):
     user, token = await cria_usuario_com_token(client, nome="Autor")
     resp = await cria_post(client, token, "Olá, este é um post de teste")
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 201, resp.text
     data = resp.json()
     assert data["post"] == "Olá, este é um post de teste"
     assert data["usuario"]["id"] == user["id"]
@@ -42,7 +42,7 @@ async def test_criar_post_vazio_ou_espacos(client: AsyncClient):
 async def test_listar_posts(client: AsyncClient):
     user, token = await cria_usuario_com_token(client)
     texto = "post único do listador"
-    assert (await cria_post(client, token, texto)).status_code == 200
+    await cria_post(client, token, texto)
 
     resp_list = await client.get("/post/", headers=auth_header(token))
     assert resp_list.status_code == 200, resp_list.text
@@ -53,7 +53,7 @@ async def test_listar_posts(client: AsyncClient):
 async def test_listar_posts_paginacao_e_ordenacao(client: AsyncClient):
     _, token = await cria_usuario_com_token(client)
     for i in range(3):
-        assert (await cria_post(client, token, f"p{i}")).status_code == 200
+        await cria_post(client, token, f"p{i}")
         await asyncio.sleep(0.01)
 
     resp_desc = await client.get(
@@ -83,8 +83,8 @@ async def test_feed_prioriza_seguidos(client: AsyncClient):
 
     txt_b = "post do Bob (seguido)"
     txt_c = "post da Carol (não seguido)"
-    assert (await cria_post(client, token_b, txt_b)).status_code == 200
-    assert (await cria_post(client, token_c, txt_c)).status_code == 200
+    await cria_post(client, token_b, txt_b)
+    await cria_post(client, token_c, txt_c)
 
     resp_feed = await client.get("/post/feed", headers=auth_header(token_a))
     assert resp_feed.status_code == 200, resp_feed.text
@@ -110,11 +110,11 @@ async def test_feed_ordem_temporal_dentro_dos_grupos(client: AsyncClient):
 
     assert (await seguir(client, token_a, b["id"])).status_code == 200
 
-    assert (await cria_post(client, token_b, "B_old")).status_code == 200
+    await cria_post(client, token_b, "B_old")
     await asyncio.sleep(0.01)
-    assert (await cria_post(client, token_c, "C_newer_than_B_old")).status_code == 200
+    await cria_post(client, token_c, "C_newer_than_B_old")
     await asyncio.sleep(0.01)
-    assert (await cria_post(client, token_b, "B_newest")).status_code == 200
+    await cria_post(client, token_b, "B_newest")
 
     feed = (await client.get("/post/feed", headers=auth_header(token_a))).json()
 
@@ -131,7 +131,7 @@ async def test_deletar_post_autorizado_e_nao_autorizado(client: AsyncClient):
     _, token_intruso = await cria_usuario_com_token(client, nome="Intruso")
 
     resp_create = await cria_post(client, token_dono, "post que só o dono pode deletar")
-    assert resp_create.status_code == 200
+    assert resp_create.status_code == 201
     post_id = resp_create.json()["id"]
 
     resp_unauth = await client.delete(

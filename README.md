@@ -26,7 +26,8 @@ API em produção: [rocketmail-api.onrender.com](https://rocketmail-api.onrender
 rocketmail-backend/
 ├── app/
 │   ├── main.py          # App FastAPI, CORS, lifespan, /healthz
-│   ├── database.py      # Conexão Postgres (SSL em produção)
+│   ├── database.py      # Conexão Postgres + ensure_schema
+│   ├── security.py      # JWT, hashing e get_current_user
 │   ├── auth.py          # Helper de token para testes
 │   ├── storage.py       # Upload de foto (Cloudinary / disco local)
 │   ├── models/          # Tabelas SQLAlchemy
@@ -87,7 +88,8 @@ Veja `.env.example`. Em resumo:
 | Variável | Descrição |
 |---|---|
 | `DATABASE_URL` | Postgres (`postgresql://...`) |
-| `SECRET_KEY` | Segredo JWT |
+| `SECRET_KEY` | Segredo JWT (**obrigatório** em produção) |
+| `ALLOWED_ORIGINS` | Origins CORS (em prod, evite `*`) |
 | `PYTHON_ENV` | `dev` / `test` / `production` |
 | `RUN_MIGRATIONS` | `1` cria/atualiza schema no boot |
 | `PUBLIC_BASE_URL` | URL pública da API |
