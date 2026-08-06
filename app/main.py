@@ -54,7 +54,7 @@ def _cors_settings() -> tuple[list[str], str | None, bool]:
     if ENV in ("production", "prod"):
         explicit = [o for o in raw if o != "*"]
         # Mantém localhost para testar a API de prod a partir do front local.
-        origins = list(dict.fromkeys([*explicit, *_LOCAL_DEV_ORIGINS]))
+        origins = list(dict.fromkeys([*explicit, *_DEFAULT_PROD_ORIGINS]))
         if wants_wildcard and not explicit:
             logger.info(
                 "CORS produção: origins locais + regex Vercel (%s)",
