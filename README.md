@@ -89,7 +89,8 @@ Veja `.env.example`. Em resumo:
 |---|---|
 | `DATABASE_URL` | Postgres (`postgresql://...`) |
 | `SECRET_KEY` | Segredo JWT (**obrigatório** em produção) |
-| `ALLOWED_ORIGINS` | Origins CORS (em prod, evite `*`) |
+| `ALLOWED_ORIGINS` | Origins CORS explícitos (vírgula) |
+| `ALLOWED_ORIGIN_REGEX` | Regex CORS (default: `*.vercel.app` em prod) |
 | `PYTHON_ENV` | `dev` / `test` / `production` |
 | `RUN_MIGRATIONS` | `1` cria/atualiza schema no boot |
 | `PUBLIC_BASE_URL` | URL pública da API |

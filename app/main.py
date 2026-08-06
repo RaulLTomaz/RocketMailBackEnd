@@ -22,9 +22,49 @@ logger = logging.getLogger("uvicorn.error")
 
 ENV = os.getenv("PYTHON_ENV", "dev").lower()
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+# Cobre app de produção e previews: https://*.vercel.app
+ALLOWED_ORIGIN_REGEX = os.getenv(
+    "ALLOWED_ORIGIN_REGEX",
+    r"https://([\w-]+\.)*vercel\.app",
+)
 RUN_MIGRATIONS = os.getenv("RUN_MIGRATIONS", "0") == "1"
 UPLOADS_ROOT = Path(os.getenv("UPLOAD_DIR", "uploads/avatars")).resolve().parent
 DB_CONNECT_MAX_ATTEMPTS = 5
+
+_LOCAL_DEV_ORIGINS = (
+    "http://localhost:8081",
+    "http://localhost:3000",
+    "http://127.0.0.1:8081",
+    "http://127.0.0.1:3000",
+)
+
+
+def _cors_settings() -> tuple[list[str], str | None, bool]:
+    """
+    Retorna (origins, origin_regex, allow_credentials).
+
+    Em produção evita `*` (incompatível com credentials) e sempre libera
+    `*.vercel.app` via regex, além dos origins explícitos em ALLOWED_ORIGINS.
+    """
+    raw = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+    wants_wildcard = (not raw) or ("*" in raw)
+    regex = (ALLOWED_ORIGIN_REGEX or "").strip() or None
+
+    if ENV in ("production", "prod"):
+        explicit = [o for o in raw if o != "*"]
+        # Mantém localhost para testar a API de prod a partir do front local.
+        origins = list(dict.fromkeys([*explicit, *_LOCAL_DEV_ORIGINS]))
+        if wants_wildcard and not explicit:
+            logger.info(
+                "CORS produção: origins locais + regex Vercel (%s)",
+                regex,
+            )
+        return origins, regex, True
+
+    if wants_wildcard:
+        return ["*"], None, False
+
+    return raw, regex, True
 
 
 async def _limpar_foto_urls_efemeras():
@@ -126,19 +166,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-origins_list = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
-use_wildcard = (not origins_list) or ("*" in origins_list)
-
-if ENV in ("production", "prod") and use_wildcard:
-    logger.warning(
-        "ALLOWED_ORIGINS=* em produção — restrinja aos domínios do frontend no Render."
-    )
+cors_origins, cors_regex, cors_credentials = _cors_settings()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if use_wildcard else origins_list,
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_regex,
     # Com wildcard o browser exige credentials=False.
-    allow_credentials=False if use_wildcard else True,
+    allow_credentials=cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
