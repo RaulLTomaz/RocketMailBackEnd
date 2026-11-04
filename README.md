@@ -18,7 +18,7 @@ A migração **não** indica deficiência do FastAPI nem falha desta implementa�
 | Recurso | Link |
 |---|---|
 | Frontend | [RocketMailFrontEnd](https://github.com/RaulLTomaz/RocketMailFrontEnd) |
-| Backend atual (Django) | *[PREENCHER_URL_DO_REPOSITORIO_DJANGO]* |
+| Backend atual (Django) | [RocketMailBackEndDjango](https://github.com/RaulLTomaz/RocketMailBackEndDjango) |
 | Deploy histórico (FastAPI) | [rocketmail-api.onrender.com](https://rocketmail-api.onrender.com) *(pode estar offline)* |
 | App (frontend) | [rocket-mail-site.vercel.app](https://rocket-mail-site.vercel.app) |
 
